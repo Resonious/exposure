@@ -7,6 +7,9 @@ RSpec.describe Fasttrace do
 
   it 'does something useful' do
     expect(Fasttrace::Trace).to be_a Class
-    expect(Fasttrace::Trace.new.start('tmp/test.out')).to be_a TracePoint
+
+    tp = Fasttrace::Trace.new('tmp/test.out')
+    expect(tp).to be_a Fasttrace::Trace
+    expect(tp.tracepoint).to be_a TracePoint
   end
 end

@@ -78,19 +78,26 @@ static void event_hook(VALUE tracepoint, void *data) {
  * =====================
  */
 
-static VALUE trace_start(VALUE self, VALUE trace_file_name) {
-    const char *trace_file_name_cstr = StringValuePtr(trace_file_name);
+static VALUE trace_initialize(VALUE self, VALUE trace_file_name) {
     trace_t *trace = RTYPEDDATA_DATA(self);
+    const char *trace_file_name_cstr = StringValuePtr(trace_file_name);
 
     trace->trace_file = fopen(trace_file_name_cstr, "w");
+    return self;
+}
 
-    trace->tracepoint = rb_tracepoint_new(
-        Qnil,
-        RUBY_EVENT_CALL | RUBY_EVENT_RETURN |
-        RUBY_EVENT_C_CALL | RUBY_EVENT_C_RETURN |
-        RUBY_EVENT_LINE,
-        event_hook, (void*)trace
-    );
+static VALUE trace_tracepoint(VALUE self) {
+    trace_t *trace = RTYPEDDATA_DATA(self);
+
+    if (trace->tracepoint == Qnil) {
+        trace->tracepoint = rb_tracepoint_new(
+            Qnil,
+            RUBY_EVENT_CALL | RUBY_EVENT_RETURN |
+            RUBY_EVENT_C_CALL | RUBY_EVENT_C_RETURN |
+            RUBY_EVENT_LINE,
+            event_hook, (void*)trace
+        );
+    }
 
     return trace->tracepoint;
 }
@@ -106,5 +113,6 @@ void ft_init_trace(void) {
     cTrace = rb_define_class_under(mFasttrace, "Trace", rb_cObject);
     rb_define_alloc_func(cTrace, trace_allocate);
 
-    rb_define_method(cTrace, "start", trace_start, 1);
+    rb_define_method(cTrace, "initialize", trace_initialize, 1);
+    rb_define_method(cTrace, "tracepoint", trace_tracepoint, 0);
 }
