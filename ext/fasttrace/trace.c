@@ -147,7 +147,7 @@ static void event_hook(VALUE tracepoint, void *data) {
     const char *class_name;
     const char *method_name_cstr;
     const char *source_file_cstr;
-    char method_sep = '#';
+    char method_sep;
 
     trace = (trace_t*)data;
     fiber = rb_fiber_current();
@@ -164,7 +164,9 @@ static void event_hook(VALUE tracepoint, void *data) {
 
     method_name_cstr = (callee != Qnil ? rb_id2name(SYM2ID(callee)) : "<none>");
     source_file_cstr = (source_file != Qnil ? StringValuePtr(source_file) : "<none>");
-    if (class_flags & kClassSingleton) method_sep = '.';
+
+    if (class_flags & kSingleton) method_sep = '.';
+    else                          method_sep = '#';
 
     fprintf(
         trace->trace_file, "%2lu:%2f\t%-8s\t%s%c%s\t%s:%2d\n",

@@ -1,8 +1,8 @@
 # Fasttrace
 
-Welcome to your new gem! In this directory, you'll find the files you need to be able to package up your Ruby library into a gem. Put your Ruby code in the file `lib/fasttrace`. To experiment with that code, run `bin/console` for an interactive prompt.
+This gem spits out an execution trace of your Ruby program. You'll get a huge file with every line number and method call, as well as timing information.
 
-TODO: Delete this and the text above, and describe your gem
+The goal is to eventually use this for full-program visualization.
 
 ## Installation
 
@@ -22,7 +22,15 @@ Or install it yourself as:
 
 ## Usage
 
-TODO: Write usage instructions here
+```ruby
+Fasttrace.start 'path/to/trace.out'
+my_ruby_code
+Fasttrace.stop
+```
+
+NOTE! Every time you run `Fasttrace.start`, the trace file will be truncated.
+
+Also, the trace files can get massive. Be careful!
 
 ## Development
 
@@ -32,8 +40,10 @@ To install this gem onto your local machine, run `bundle exec rake install`. To 
 
 ## Contributing
 
-Bug reports and pull requests are welcome on GitHub at https://github.com/[USERNAME]/fasttrace.
+Bug reports and pull requests are welcome on GitHub at https://github.com/Resonious/fasttrace.
 
 ## License
 
 The gem is available as open source under the terms of the [MIT License](https://opensource.org/licenses/MIT).
+
+This gem borrows a lot of code from the ruby-prof project, and thus we also include [ruby-prof's license](https://github.com/ruby-prof/ruby-prof/blob/b235b8784834f6bcc78d73b9c0cbad8a92b54811/LICENSE).
