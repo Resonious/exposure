@@ -11,5 +11,9 @@ RSpec.describe Fasttrace do
     tp = Fasttrace::Trace.new('tmp/test.out')
     expect(tp).to be_a Fasttrace::Trace
     expect(tp.tracepoint).to be_a TracePoint
+
+    tp.tracepoint.enable
+    puts 'hello world'
+    tp.tracepoint.disable
   end
 end
