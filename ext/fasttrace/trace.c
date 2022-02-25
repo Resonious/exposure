@@ -104,6 +104,31 @@ static const char* get_event_name(rb_event_flag_t event)
     }
 }
 
+static const char *get_class_name(VALUE klass, unsigned int* flags) {
+    VALUE attached;
+    *flags = 0;
+
+    if (klass == 0 || klass == Qnil) {
+        return "nil";
+    }
+
+    if (BUILTIN_TYPE(klass) == T_CLASS && FL_TEST(klass, FL_SINGLETON)) {
+        /* This is a class singleton. Something like MyClass.my_method */
+        *flags = kClassSingleton;
+        attached = rb_iv_get(klass, "__attached__");
+
+        switch (BUILTIN_TYPE(attached)) {
+        case T_MODULE:
+            *flags = kModuleSingleton;
+        case T_CLASS:
+            klass = attached;
+            break;
+        }
+    }
+
+    return rb_class2name(klass);
+}
+
 /*
  * This is heavily "inspired" by ruby-prof
  * https://github.com/ruby-prof/ruby-prof/blob/master/ext/ruby_prof/rp_profile.c
@@ -118,7 +143,11 @@ static void event_hook(VALUE tracepoint, void *data) {
     VALUE source_file;
     int source_line;
     VALUE callee, klass;
-    const char *class_name = "<none>";
+    unsigned int class_flags;
+    const char *class_name;
+    const char *method_name_cstr;
+    const char *source_file_cstr;
+    char method_sep = '#';
 
     trace = (trace_t*)data;
     fiber = rb_fiber_current();
@@ -131,16 +160,16 @@ static void event_hook(VALUE tracepoint, void *data) {
     source_line    = FIX2INT(rb_tracearg_lineno(trace_arg));
     callee         = rb_tracearg_callee_id(trace_arg);
     klass          = rb_tracearg_defined_class(trace_arg);
-    if (klass != 0 && klass != Qnil)
-        class_name = rb_class2name(klass);
+    class_name     = get_class_name(klass, &class_flags);
 
-    const char* method_name_cstr = (callee != Qnil ? rb_id2name(SYM2ID(callee)) : "<none>");
-    const char* source_file_cstr = (source_file != Qnil ? StringValuePtr(source_file) : "<none>");
+    method_name_cstr = (callee != Qnil ? rb_id2name(SYM2ID(callee)) : "<none>");
+    source_file_cstr = (source_file != Qnil ? StringValuePtr(source_file) : "<none>");
+    if (class_flags & kClassSingleton) method_sep = '.';
 
     fprintf(
-        trace->trace_file, "%2lu:%2f\t%-8s\t%s#%s\t%s:%2d\n",
+        trace->trace_file, "%2lu:%2f\t%-8s\t%s%c%s\t%s:%2d\n",
         FIX2ULONG(fiber), measure_wall_time(),
-        event_name, class_name, method_name_cstr, source_file_cstr, source_line
+        event_name, class_name, method_sep, method_name_cstr, source_file_cstr, source_line
     );
 }
 
