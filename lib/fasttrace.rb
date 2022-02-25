@@ -5,5 +5,15 @@ require_relative 'fasttrace/fasttrace.so'
 
 module Fasttrace
   class Error < StandardError; end
-  # Your code goes here...
+
+  def self.start(trace_file = 'tmp/trace.out')
+    raise Error, 'Already started' if $fasttrace
+    $fasttrace = Trace.new(trace_file)
+    $fasttrace.tracepoint.enable
+  end
+
+  def self.stop
+    $fasttrace.tracepoint.disable
+    $fasttrace = nil
+  end
 end

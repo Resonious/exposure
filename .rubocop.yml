@@ -8,8 +8,10 @@ Style/StringLiterals:
   EnforcedStyle: single_quotes
 
 Style/StringLiteralsInInterpolation:
-  Enabled: true
-  EnforcedStyle: double_quotes
+  Enabled: false
+
+Style/GlobalVars:
+  Enabled: false
 
 Layout/LineLength:
   Max: 120
