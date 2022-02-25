@@ -2,9 +2,11 @@
 #define FASTTRACE_TRACE_H 1
 
 #include "fasttrace.h"
+#include <stdio.h>
 
 typedef struct trace_t {
     VALUE tracepoint;
+    FILE *trace_file;
     int running;
 } trace_t;
 

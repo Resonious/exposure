@@ -1,4 +1,5 @@
 #include "fasttrace.h"
+#include "trace.h"
 #include <stdio.h>
 
 VALUE mFasttrace;

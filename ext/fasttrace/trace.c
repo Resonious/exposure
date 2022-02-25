@@ -22,9 +22,11 @@ static void trace_mark(void *data) {
 
 static void trace_ruby_gc_free(void *data) {
     trace_t *trace = (trace_t*)data;
-    /*
-     * TODO: free any dynamically allocated sub-objects this might have.
-     */
+
+    if (trace->trace_file) {
+        fclose(trace->trace_file);
+    }
+
     xfree(trace);
 }
 
@@ -51,9 +53,22 @@ static VALUE trace_allocate(VALUE klass) {
 
     result = TypedData_Make_Struct(klass, trace_t, &trace_type, trace);
     trace->tracepoint = Qnil;
+    trace->trace_file = NULL;
     trace->running = 0;
 
     return result;
+}
+
+
+/*
+ * =============
+ * Trace methods
+ * =============
+ */
+
+/* TODO */
+static void event_hook(VALUE tracepoint, void *data) {
+    printf("hook ");
 }
 
 
@@ -67,7 +82,16 @@ static VALUE trace_start(VALUE self, VALUE trace_file_name) {
     const char *trace_file_name_cstr = StringValuePtr(trace_file_name);
     trace_t *trace = RTYPEDDATA_DATA(self);
 
-    printf("Hohoho %s\n", trace_file_name_cstr);
+    trace->trace_file = fopen(trace_file_name_cstr, "w");
+
+    trace->tracepoint = rb_tracepoint_new(
+        Qnil,
+        RUBY_EVENT_CALL | RUBY_EVENT_RETURN |
+        RUBY_EVENT_C_CALL | RUBY_EVENT_C_RETURN |
+        RUBY_EVENT_LINE,
+        event_hook, (void*)trace
+    );
+
     return trace->tracepoint;
 }
 
