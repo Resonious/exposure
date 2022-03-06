@@ -22,7 +22,7 @@ static void trace_mark(void *data) {
     rb_gc_mark(trace->tracepoint);
 }
 
-static void trace_ruby_gc_free(void *data) {
+static void trace_free(void *data) {
     trace_t *trace = (trace_t*)data;
 
     if (trace->trace_file) {
@@ -42,7 +42,7 @@ static const rb_data_type_t trace_type =
     .function =
     {
         .dmark = trace_mark,
-        .dfree = trace_ruby_gc_free,
+        .dfree = trace_free,
         .dsize = trace_size,
     },
     .data = NULL,
