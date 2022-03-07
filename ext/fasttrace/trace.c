@@ -1,4 +1,8 @@
 #include "trace.h"
+#include <assert.h>
+#include <unistd.h>
+#include <errno.h>
+#include <sys/mman.h>
 
 VALUE cTrace;
 const unsigned int kSingleton = kClassSingleton | kModuleSingleton |
@@ -56,8 +60,11 @@ static void trace_mark(void *data) {
 static void trace_free(void *data) {
     trace_t *trace = (trace_t*)data;
 
-    if (trace->trace_header_file) {
-        fclose(trace->trace_header_file);
+    if (trace->header.file) {
+        fclose(trace->header.file);
+    }
+    if (trace->strings.file) {
+        fclose(trace->strings.file);
     }
 
     xfree(trace);
@@ -87,15 +94,17 @@ static VALUE trace_allocate(VALUE klass) {
     result = TypedData_Make_Struct(klass, trace_t, &trace_type, trace);
     trace->tracepoint = Qnil;
 
-    trace->trace_header_file = NULL;
-    trace->trace_header = NULL;
-    trace->trace_header_i = 0;
-    trace->trace_header_len = 0;
+    trace->header.file = NULL;
+    trace->header.data = NULL;
+    trace->header.i = 0;
+    trace->header.len = 0;
 
-    trace->trace_data_file = NULL;
-    trace->trace_data = NULL;
-    trace->trace_data_i = 0;
-    trace->trace_data_len = 0;
+    trace->strings.file = NULL;
+    trace->strings.data = NULL;
+    trace->strings.i = 0;
+    trace->strings.len = 0;
+
+    trace->strings_table = NULL;
 
     trace->running = 0;
 
@@ -109,8 +118,24 @@ static VALUE trace_allocate(VALUE klass) {
  * =============
  */
 
-static const char* get_event_name(rb_event_flag_t event)
-{
+static size_t PAGE_SIZE;
+
+static void trace_file_map(trace_file_t *file) {
+    assert(file);
+    assert(file->file);
+
+    ftruncate(fileno(file->file), file->len);
+    file->data = mmap(
+        NULL,
+        file->len,
+        PROT_READ | PROT_WRITE,
+        MAP_SHARED,
+        fileno(file->file),
+        0
+    );
+}
+
+static const char* get_event_name(rb_event_flag_t event) {
     switch (event) {
     case RUBY_EVENT_LINE:
         return "line";
@@ -210,8 +235,11 @@ static void event_hook(VALUE tracepoint, void *data) {
     if (class_flags & kSingleton) method_sep = '.';
     else                          method_sep = '#';
 
+    /* Silly test of my mmap */
+    strcpy(trace->strings.data, class_name);
+
     fprintf(
-        trace->trace_header_file, "%2lu:%2f\t%-8s\t%s%c%s\t%s:%2d\n",
+        trace->header.file, "%2lu:%2f\t%-8s\t%s%c%s\t%s:%2d\n",
         FIX2ULONG(fiber), measure_wall_time(),
         event_name, class_name, method_sep, method_name_cstr, source_file_cstr, source_line
     );
@@ -228,12 +256,22 @@ static VALUE trace_initialize(VALUE self, VALUE trace_header_name) {
     trace_t *trace = RTYPEDDATA_DATA(self);
     const char *trace_header_name_cstr = StringValuePtr(trace_header_name);
 
-    VALUE data_header_name = rb_str_new(trace_header_name_cstr, RSTRING_LEN(trace_header_name));
-    rb_str_append(data_header_name, rb_str_new_literal(".data"));
-    const char *trace_data_name_cstr = StringValuePtr(data_header_name);
+    VALUE trace_data_name = rb_str_new(trace_header_name_cstr, RSTRING_LEN(trace_header_name));
+    rb_str_append(trace_data_name, rb_str_new_literal(".strings"));
+    const char *trace_data_name_cstr = StringValuePtr(trace_data_name);
 
-    trace->trace_header_file = fopen(trace_header_name_cstr, "w");
-    trace->trace_data_file = fopen(trace_data_name_cstr, "w");
+    trace->header.file = fopen(trace_header_name_cstr, "w");
+    trace->strings.file = fopen(trace_data_name_cstr, "rw+");
+
+    /* Just to make sure I know what I'm doing... */
+    trace->strings.len = PAGE_SIZE;
+    trace_file_map(&trace->strings);
+
+    trace->strings_table = st_init_strtable_with_size(4096);
+
+    if (trace->strings.data == MAP_FAILED) {
+        rb_raise(rb_eRuntimeError, "Failed to mmap the strings file: %s", strerror(errno));
+    }
 
     return self;
 }
@@ -262,6 +300,8 @@ static VALUE trace_tracepoint(VALUE self) {
  */
 
 void ft_init_trace(void) {
+    PAGE_SIZE = (size_t)getpagesize();
+
     cTrace = rb_define_class_under(mFasttrace, "Trace", rb_cObject);
     rb_define_alloc_func(cTrace, trace_allocate);
 

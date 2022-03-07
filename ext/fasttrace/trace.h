@@ -5,18 +5,20 @@
 #include "measure.h"
 #include <stdio.h>
 
+typedef struct trace_file_t {
+    FILE *file;
+    void *data;
+    size_t i;
+    size_t len;
+} trace_file_t;
+
 typedef struct trace_t {
     VALUE tracepoint;
 
-    FILE *trace_header_file;
-    void *trace_header;
-    size_t trace_header_i;
-    size_t trace_header_len;
+    trace_file_t header;
+    trace_file_t strings;
 
-    FILE *trace_data_file;
-    void *trace_data;
-    size_t trace_data_i;
-    size_t trace_data_len;
+    st_table *strings_table;
 
     int running;
 } trace_t;
