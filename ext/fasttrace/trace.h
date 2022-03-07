@@ -7,7 +7,17 @@
 
 typedef struct trace_t {
     VALUE tracepoint;
-    FILE *trace_file;
+
+    FILE *trace_header_file;
+    void *trace_header;
+    size_t trace_header_i;
+    size_t trace_header_len;
+
+    FILE *trace_data_file;
+    void *trace_data;
+    size_t trace_data_i;
+    size_t trace_data_len;
+
     int running;
 } trace_t;
 

@@ -4,6 +4,37 @@ VALUE cTrace;
 const unsigned int kSingleton = kClassSingleton | kModuleSingleton |
                                 kObjectSingleton | kOtherSingleton;
 
+/*
+ * ==============================
+ * Data structures for IPC
+ * ==============================
+ *
+ * To send traces to the viewer app, we will use 2 files:
+ * 1. The "header" file - this is a big in-place array of fixed-sized offsets
+ *    into ...
+ * 2. The "data" file. This is a "heap" of variable-sized data, pointed to by
+ *    the header file. This contains class names, method names, file locations.
+ */
+
+const unsigned int HEADER_TYPE_CALL = 1;
+const unsigned int HEADER_TYPE_RETURN = 2;
+
+typedef struct trace_header_t {
+    unsigned int type;
+
+    unsigned int method_name_start;
+    unsigned int method_name_len;
+
+    unsigned int file_name_start;
+    unsigned int file_name_len;
+
+    unsigned int line_number;
+} trace_header_t;
+
+/*
+ * The data file is just a blob. The structure is dictated by the header.
+ */
+
 
 /*
  * ==============================
@@ -25,8 +56,8 @@ static void trace_mark(void *data) {
 static void trace_free(void *data) {
     trace_t *trace = (trace_t*)data;
 
-    if (trace->trace_file) {
-        fclose(trace->trace_file);
+    if (trace->trace_header_file) {
+        fclose(trace->trace_header_file);
     }
 
     xfree(trace);
@@ -55,7 +86,17 @@ static VALUE trace_allocate(VALUE klass) {
 
     result = TypedData_Make_Struct(klass, trace_t, &trace_type, trace);
     trace->tracepoint = Qnil;
-    trace->trace_file = NULL;
+
+    trace->trace_header_file = NULL;
+    trace->trace_header = NULL;
+    trace->trace_header_i = 0;
+    trace->trace_header_len = 0;
+
+    trace->trace_data_file = NULL;
+    trace->trace_data = NULL;
+    trace->trace_data_i = 0;
+    trace->trace_data_len = 0;
+
     trace->running = 0;
 
     return result;
@@ -123,6 +164,7 @@ static const char *get_class_name(VALUE klass, unsigned int* flags) {
         case T_CLASS:
             klass = attached;
             break;
+        default: break;
         }
     }
 
@@ -169,7 +211,7 @@ static void event_hook(VALUE tracepoint, void *data) {
     else                          method_sep = '#';
 
     fprintf(
-        trace->trace_file, "%2lu:%2f\t%-8s\t%s%c%s\t%s:%2d\n",
+        trace->trace_header_file, "%2lu:%2f\t%-8s\t%s%c%s\t%s:%2d\n",
         FIX2ULONG(fiber), measure_wall_time(),
         event_name, class_name, method_sep, method_name_cstr, source_file_cstr, source_line
     );
@@ -182,11 +224,17 @@ static void event_hook(VALUE tracepoint, void *data) {
  * =====================
  */
 
-static VALUE trace_initialize(VALUE self, VALUE trace_file_name) {
+static VALUE trace_initialize(VALUE self, VALUE trace_header_name) {
     trace_t *trace = RTYPEDDATA_DATA(self);
-    const char *trace_file_name_cstr = StringValuePtr(trace_file_name);
+    const char *trace_header_name_cstr = StringValuePtr(trace_header_name);
 
-    trace->trace_file = fopen(trace_file_name_cstr, "w");
+    VALUE data_header_name = rb_str_new(trace_header_name_cstr, RSTRING_LEN(trace_header_name));
+    rb_str_append(data_header_name, rb_str_new_literal(".data"));
+    const char *trace_data_name_cstr = StringValuePtr(data_header_name);
+
+    trace->trace_header_file = fopen(trace_header_name_cstr, "w");
+    trace->trace_data_file = fopen(trace_data_name_cstr, "w");
+
     return self;
 }
 
