@@ -24,15 +24,15 @@ const unsigned int HEADER_TYPE_CALL = 1;
 const unsigned int HEADER_TYPE_RETURN = 2;
 
 typedef struct trace_header_t {
-    unsigned int type;
+    unsigned long long type;
 
-    unsigned int method_name_start;
-    unsigned int method_name_len;
+    unsigned long long method_name_start;
+    unsigned long long method_name_len;
 
-    unsigned int file_name_start;
-    unsigned int file_name_len;
+    unsigned long long file_name_start;
+    unsigned long long file_name_len;
 
-    unsigned int line_number;
+    unsigned long long line_number;
 } trace_header_t;
 
 /*
@@ -65,6 +65,10 @@ static void trace_free(void *data) {
     }
     if (trace->strings.file) {
         fclose(trace->strings.file);
+    }
+    /* TODO: munmap the file data pointers */
+    if (trace->strings_table) {
+        st_free_table(trace->strings_table);
     }
 
     xfree(trace);
@@ -120,7 +124,7 @@ static VALUE trace_allocate(VALUE klass) {
 
 static size_t PAGE_SIZE;
 
-static void trace_file_map(trace_file_t *file) {
+static void trace_file_map_memory(trace_file_t *file) {
     assert(file);
     assert(file->file);
 
@@ -133,6 +137,22 @@ static void trace_file_map(trace_file_t *file) {
         fileno(file->file),
         0
     );
+    /*
+     * TODO: ... what should we do when the file gets huge?
+     *
+     * we can hold a file->offset and then start unmapping
+     * old sections. I think that'll work fine but I don't
+     * know what'll happen if suddenly the next set of addrs
+     * is already in-use. kernel will need to give us a
+     * pointer with a gap. we can account for this easy if
+     * our trace header struct is divisible by the page size.
+     *
+     * Just did some math. If we make trace_header_t 64 bytes
+     * on the dot, then we can run right up to the page boundary.
+     * Then, once we reach the end, we can just unmap the
+     * previous range and map a new range without caring whether
+     * or not the new address comes directly after the prev one.
+     */
 }
 
 static const char* get_event_name(rb_event_flag_t event) {
@@ -265,7 +285,7 @@ static VALUE trace_initialize(VALUE self, VALUE trace_header_name) {
 
     /* Just to make sure I know what I'm doing... */
     trace->strings.len = PAGE_SIZE;
-    trace_file_map(&trace->strings);
+    trace_file_map_memory(&trace->strings);
 
     trace->strings_table = st_init_strtable_with_size(4096);
 
