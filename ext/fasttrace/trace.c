@@ -285,7 +285,7 @@ static void event_hook(VALUE tracepoint, void *data) {
     strcpy(trace->strings.data, class_name);
 
     trace_header_t *entry = (trace_header_t *)
-        (trace->header.data + trace->header.i - trace->header.offset);
+        (trace->header.data + (trace->header.i - trace->header.offset));
 
     entry->type = ruby_event_to_header_type(event);
     entry->method_name_start = 0;
@@ -340,7 +340,7 @@ static VALUE trace_initialize(VALUE self, VALUE trace_header_name) {
     trace->strings_table = st_init_strtable_with_size(4096);
 
     if (sizeof(trace_header_t) != 32) {
-        rb_raise(rb_eRuntimeError, "Trace header not 32 bytes? %d", sizeof(trace_header_t));
+        rb_raise(rb_eRuntimeError, "Trace header not 32 bytes? %ld", sizeof(trace_header_t));
     }
 
     return self;
