@@ -24,20 +24,72 @@ const unsigned int HEADER_TYPE_CALL = 1;
 const unsigned int HEADER_TYPE_RETURN = 2;
 
 typedef struct trace_header_t {
-    unsigned long long type;
+    unsigned long long type : 32;
 
-    unsigned long long method_name_start;
-    unsigned long long method_name_len;
+    unsigned long long method_name_start : 64;
+    unsigned long long method_name_len : 32;
 
-    unsigned long long file_name_start;
-    unsigned long long file_name_len;
+    unsigned long long file_name_start : 64;
+    unsigned long long file_name_len : 32;
 
-    unsigned long long line_number;
-} trace_header_t;
+    unsigned long long line_number : 32;
+} __attribute__ ((__packed__)) trace_header_t;
 
-/*
- * The data file is just a blob. The structure is dictated by the header.
- */
+static unsigned int ruby_event_to_header_type(rb_event_flag_t event) {
+    switch (event) {
+    case RUBY_EVENT_CALL:
+        return HEADER_TYPE_CALL;
+    case RUBY_EVENT_RETURN:
+        return HEADER_TYPE_RETURN;
+    case RUBY_EVENT_B_CALL:
+        return HEADER_TYPE_CALL;
+    case RUBY_EVENT_B_RETURN:
+        return HEADER_TYPE_RETURN;
+    case RUBY_EVENT_C_CALL:
+        return HEADER_TYPE_CALL;
+    case RUBY_EVENT_C_RETURN:
+        return HEADER_TYPE_RETURN;
+    default:
+        return 0;
+    }
+}
+
+static size_t PAGE_SIZE;
+
+static void trace_file_map_memory(trace_file_t *file) {
+    assert(file);
+    if (file->file == NULL) {
+        rb_raise(rb_eRuntimeError, "File not open: %s", strerror(errno));
+    }
+
+    ftruncate(fileno(file->file), file->len);
+    file->data = mmap(
+        NULL,
+        file->len - file->offset,
+        PROT_READ | PROT_WRITE,
+        MAP_SHARED,
+        fileno(file->file),
+        file->offset
+    );
+
+    if (file->data == MAP_FAILED) {
+        rb_raise(rb_eRuntimeError, "Failed to mmap: %s", strerror(errno));
+    }
+}
+
+static void trace_file_unmap_memory(trace_file_t *file) {
+    assert(file);
+    assert(file->file);
+    assert(file->data);
+
+    int result = munmap(file->data, file->len - file->offset);
+
+    if (result == -1) {
+        rb_raise(rb_eRuntimeError, "Failed to munmap: %s", strerror(errno));
+    }
+
+    file->data = NULL;
+}
 
 
 /*
@@ -60,13 +112,18 @@ static void trace_mark(void *data) {
 static void trace_free(void *data) {
     trace_t *trace = (trace_t*)data;
 
+    if (trace->header.data) {
+        trace_file_unmap_memory(&trace->header);
+    }
+    if (trace->strings.data) {
+        trace_file_unmap_memory(&trace->strings);
+    }
     if (trace->header.file) {
         fclose(trace->header.file);
     }
     if (trace->strings.file) {
         fclose(trace->strings.file);
     }
-    /* TODO: munmap the file data pointers */
     if (trace->strings_table) {
         st_free_table(trace->strings_table);
     }
@@ -101,11 +158,13 @@ static VALUE trace_allocate(VALUE klass) {
     trace->header.file = NULL;
     trace->header.data = NULL;
     trace->header.i = 0;
+    trace->header.offset = 0;
     trace->header.len = 0;
 
     trace->strings.file = NULL;
     trace->strings.data = NULL;
     trace->strings.i = 0;
+    trace->strings.offset = 0;
     trace->strings.len = 0;
 
     trace->strings_table = NULL;
@@ -121,39 +180,6 @@ static VALUE trace_allocate(VALUE klass) {
  * Trace methods
  * =============
  */
-
-static size_t PAGE_SIZE;
-
-static void trace_file_map_memory(trace_file_t *file) {
-    assert(file);
-    assert(file->file);
-
-    ftruncate(fileno(file->file), file->len);
-    file->data = mmap(
-        NULL,
-        file->len,
-        PROT_READ | PROT_WRITE,
-        MAP_SHARED,
-        fileno(file->file),
-        0
-    );
-    /*
-     * TODO: ... what should we do when the file gets huge?
-     *
-     * we can hold a file->offset and then start unmapping
-     * old sections. I think that'll work fine but I don't
-     * know what'll happen if suddenly the next set of addrs
-     * is already in-use. kernel will need to give us a
-     * pointer with a gap. we can account for this easy if
-     * our trace header struct is divisible by the page size.
-     *
-     * Just did some math. If we make trace_header_t 64 bytes
-     * on the dot, then we can run right up to the page boundary.
-     * Then, once we reach the end, we can just unmap the
-     * previous range and map a new range without caring whether
-     * or not the new address comes directly after the prev one.
-     */
-}
 
 static const char* get_event_name(rb_event_flag_t event) {
     switch (event) {
@@ -258,6 +284,27 @@ static void event_hook(VALUE tracepoint, void *data) {
     /* Silly test of my mmap */
     strcpy(trace->strings.data, class_name);
 
+    trace_header_t *entry = (trace_header_t *)
+        (trace->header.data + trace->header.i - trace->header.offset);
+
+    entry->type = ruby_event_to_header_type(event);
+    entry->method_name_start = 0;
+    entry->method_name_len = 0;
+    entry->file_name_start = 0;
+    entry->file_name_len = 0;
+    entry->line_number = source_line;
+
+    trace->header.i += sizeof(trace_header_t);
+
+    /* Re-adjust header mapping once we run out of space */
+    if (trace->header.i >= trace->header.len) {
+        trace_file_unmap_memory(&trace->header);
+        trace->header.offset = trace->header.len;
+        trace->header.len *= 2; /* Expanding by 2x should be fast over time yeah? */
+        trace_file_map_memory(&trace->header);
+    }
+
+    return;
     fprintf(
         trace->header.file, "%2lu:%2f\t%-8s\t%s%c%s\t%s:%2d\n",
         FIX2ULONG(fiber), measure_wall_time(),
@@ -280,17 +327,20 @@ static VALUE trace_initialize(VALUE self, VALUE trace_header_name) {
     rb_str_append(trace_data_name, rb_str_new_literal(".strings"));
     const char *trace_data_name_cstr = StringValuePtr(trace_data_name);
 
-    trace->header.file = fopen(trace_header_name_cstr, "w");
-    trace->strings.file = fopen(trace_data_name_cstr, "rw+");
+    trace->header.file = fopen(trace_header_name_cstr, "wb+");
+    trace->strings.file = fopen(trace_data_name_cstr, "wb+");
 
     /* Just to make sure I know what I'm doing... */
     trace->strings.len = PAGE_SIZE;
     trace_file_map_memory(&trace->strings);
 
+    trace->header.len = PAGE_SIZE;
+    trace_file_map_memory(&trace->header);
+
     trace->strings_table = st_init_strtable_with_size(4096);
 
-    if (trace->strings.data == MAP_FAILED) {
-        rb_raise(rb_eRuntimeError, "Failed to mmap the strings file: %s", strerror(errno));
+    if (sizeof(trace_header_t) != 32) {
+        rb_raise(rb_eRuntimeError, "Trace header not 32 bytes? %d", sizeof(trace_header_t));
     }
 
     return self;

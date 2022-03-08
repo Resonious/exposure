@@ -6,9 +6,22 @@
 #include <stdio.h>
 
 typedef struct trace_file_t {
+    /* file handle, should be rw+ */
     FILE *file;
+    /* mmapped data ptr */
     void *data;
+
+    /*
+     * Current offset from the start of the file.
+     */
     size_t i;
+    /*
+     * Offset of data ptr relative to start of file.
+     */
+    size_t offset;
+    /*
+     * Total size of file.
+     */
     size_t len;
 } trace_file_t;
 
@@ -23,7 +36,6 @@ typedef struct trace_t {
     int running;
 } trace_t;
 
-// Source relation bit offsets.
 enum {
     kModuleIncludee = 0x1,  // Included in module
     kClassSingleton = 0x2,  // Singleton of a class
