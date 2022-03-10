@@ -106,6 +106,17 @@ static void trace_file_resize(trace_file_t *file, size_t new_size) {
     trace_file_map_memory(file);
 }
 
+/*
+ * This unmaps the memory and truncates the file so that there's no extra zeros
+ * at the end.
+ */
+static void trace_file_finalize(trace_file_t *file) {
+    if (file->data) {
+        trace_file_unmap_memory(file);
+    }
+    ftruncate(fileno(file->file), file->i);
+}
+
 
 /*
  * ==============================
@@ -128,10 +139,10 @@ static void trace_free(void *data) {
     trace_t *trace = (trace_t*)data;
 
     if (trace->header.data) {
-        trace_file_unmap_memory(&trace->header);
+        trace_file_finalize(&trace->header);
     }
     if (trace->strings.data) {
-        trace_file_unmap_memory(&trace->strings);
+        trace_file_finalize(&trace->strings);
     }
     if (trace->header.file) {
         fclose(trace->header.file);
