@@ -292,6 +292,10 @@ static void handle_call_or_return_event(VALUE tracepoint, trace_t *trace) {
     const char *source_file_cstr;
     char method_sep;
 
+    char *buffer;
+    size_t method_name_start;
+    int method_name_len;
+
     fiber = rb_fiber_current();
 
     trace_arg = rb_tracearg_from_tracepoint(tracepoint);
@@ -310,15 +314,43 @@ static void handle_call_or_return_event(VALUE tracepoint, trace_t *trace) {
     if (class_flags & kSingleton) method_sep = '.';
     else                          method_sep = '#';
 
-    /* Silly test of my mmap */
-    strcpy(trace->strings.data, class_name);
+    /* For now, stupidly put all strings into the strings file */
+retry_method_name:
+    buffer = trace->strings.data + (trace->strings.i - trace->strings.offset);
 
+    method_name_len = snprintf(
+        buffer,
+        trace->strings.len - trace->strings.i,
+        "%s%c%s",
+        class_name, method_sep, method_name_cstr
+    );
+
+    if (method_name_len <= 0) {
+        printf(
+            "failed to sprintf method name ?? %s%c%s %s\n",
+            class_name, method_sep, method_name_cstr, strerror(errno)
+        );
+        printf("%i\n", trace->strings.len - trace->strings.i);
+        assert(method_name_len > 0);
+    }
+
+    /* Need to resize and try again if the full formatted string is too long */
+    if ((trace->strings.i + method_name_len) >= trace->strings.len) {
+        trace->strings.i = trace->strings.len;
+        trace_file_resize(&trace->strings, trace->strings.len * 2);
+        goto retry_method_name;
+    }
+    method_name_start = trace->strings.i;
+    trace->strings.i += method_name_len;
+
+    /* Put the actual trace event into the header file
+     * (man why do I call it header...) */
     trace_header_t *entry = (trace_header_t *)
         (trace->header.data + (trace->header.i - trace->header.offset));
 
     entry->type = ruby_event_to_header_type(event);
-    entry->method_name_start = 0;
-    entry->method_name_len = 0;
+    entry->method_name_start = method_name_start;
+    entry->method_name_len = method_name_len;
     entry->caller_file_start = 0;
     entry->caller_file_len = 0;
     entry->caller_line_number = trace->current_line_number;
