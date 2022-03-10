@@ -23,16 +23,24 @@ const unsigned int kSingleton = kClassSingleton | kModuleSingleton |
 const unsigned int HEADER_TYPE_CALL = 1;
 const unsigned int HEADER_TYPE_RETURN = 2;
 
+/*
+ * NOTE: this struct needs to have a byte size that is a power of 2.
+ */
 typedef struct trace_header_t {
     unsigned long long type : 32;
 
     unsigned long long method_name_start : 64;
     unsigned long long method_name_len : 32;
 
-    unsigned long long file_name_start : 64;
-    unsigned long long file_name_len : 32;
+    unsigned long long caller_file_start : 64;
+    unsigned long long caller_file_len : 32;
+    unsigned long long caller_line_number : 32;
 
-    unsigned long long line_number : 32;
+    unsigned long long callee_file_start : 64;
+    unsigned long long callee_file_len : 32;
+    unsigned long long callee_line_number : 32;
+
+    /* TODO: 16 more bytes... */
 } __attribute__ ((__packed__)) trace_header_t;
 
 static unsigned int ruby_event_to_header_type(rb_event_flag_t event) {
@@ -89,6 +97,13 @@ static void trace_file_unmap_memory(trace_file_t *file) {
     }
 
     file->data = NULL;
+}
+
+static void trace_file_resize(trace_file_t *file, size_t new_size) {
+    trace_file_unmap_memory(file);
+    file->offset = file->i;
+    file->len = new_size;
+    trace_file_map_memory(file);
 }
 
 
@@ -242,12 +257,16 @@ static const char *get_class_name(VALUE klass, unsigned int* flags) {
     return rb_class2name(klass);
 }
 
-/*
- * This is heavily "inspired" by ruby-prof
- * https://github.com/ruby-prof/ruby-prof/blob/master/ext/ruby_prof/rp_profile.c
- */
-static void event_hook(VALUE tracepoint, void *data) {
-    trace_t *trace;
+static void handle_line_event(VALUE tracepoint, trace_t *trace) {
+    rb_trace_arg_t *trace_arg;
+
+    trace_arg = rb_tracearg_from_tracepoint(tracepoint);
+
+    trace->current_file_name = rb_tracearg_path(trace_arg);
+    trace->current_line_number = FIX2INT(rb_tracearg_lineno(trace_arg));
+}
+
+static void handle_call_or_return_event(VALUE tracepoint, trace_t *trace) {
     rb_trace_arg_t *trace_arg;
     rb_event_flag_t event;
     VALUE fiber;
@@ -262,7 +281,6 @@ static void event_hook(VALUE tracepoint, void *data) {
     const char *source_file_cstr;
     char method_sep;
 
-    trace = (trace_t*)data;
     fiber = rb_fiber_current();
 
     trace_arg = rb_tracearg_from_tracepoint(tracepoint);
@@ -290,18 +308,18 @@ static void event_hook(VALUE tracepoint, void *data) {
     entry->type = ruby_event_to_header_type(event);
     entry->method_name_start = 0;
     entry->method_name_len = 0;
-    entry->file_name_start = 0;
-    entry->file_name_len = 0;
-    entry->line_number = source_line;
+    entry->caller_file_start = 0;
+    entry->caller_file_len = 0;
+    entry->caller_line_number = trace->current_line_number;
+    entry->callee_file_start = 0;
+    entry->callee_file_len = 0;
+    entry->callee_line_number = source_line;
 
-    trace->header.i += sizeof(trace_header_t);
+    trace->header.i += 64;
 
     /* Re-adjust header mapping once we run out of space */
     if (trace->header.i >= trace->header.len) {
-        trace_file_unmap_memory(&trace->header);
-        trace->header.offset = trace->header.len;
-        trace->header.len *= 2; /* Expanding by 2x should be fast over time yeah? */
-        trace_file_map_memory(&trace->header);
+        trace_file_resize(&trace->header, trace->header.len * 2);
     }
 
     return;
@@ -310,6 +328,21 @@ static void event_hook(VALUE tracepoint, void *data) {
         FIX2ULONG(fiber), measure_wall_time(),
         event_name, class_name, method_sep, method_name_cstr, source_file_cstr, source_line
     );
+}
+
+/*
+ * This is heavily "inspired" by ruby-prof
+ * https://github.com/ruby-prof/ruby-prof/blob/master/ext/ruby_prof/rp_profile.c
+ */
+static void event_hook(VALUE tracepoint, void *data) {
+    rb_trace_arg_t *trace_arg;
+    rb_event_flag_t event;
+
+    trace_arg = rb_tracearg_from_tracepoint(tracepoint);
+    event     = rb_tracearg_event_flag(trace_arg);
+
+    if (event == RUBY_EVENT_LINE) handle_line_event(tracepoint, (trace_t *)data);
+    else handle_call_or_return_event(tracepoint, (trace_t *)data);
 }
 
 
@@ -339,8 +372,8 @@ static VALUE trace_initialize(VALUE self, VALUE trace_header_name) {
 
     trace->strings_table = st_init_strtable_with_size(4096);
 
-    if (sizeof(trace_header_t) != 32) {
-        rb_raise(rb_eRuntimeError, "Trace header not 32 bytes? %ld", sizeof(trace_header_t));
+    if (sizeof(trace_header_t) > 64) {
+        rb_raise(rb_eRuntimeError, "Trace header not within 64 bytes? %ld", sizeof(trace_header_t));
     }
 
     return self;

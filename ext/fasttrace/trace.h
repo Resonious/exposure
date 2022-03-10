@@ -33,6 +33,9 @@ typedef struct trace_t {
 
     st_table *strings_table;
 
+    VALUE current_file_name;
+    int current_line_number;
+
     int running;
 } trace_t;
 
