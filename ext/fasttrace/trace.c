@@ -342,15 +342,27 @@ static void handle_call_or_return_event(VALUE tracepoint, trace_t *trace) {
         &trace->strings,
         entry->method_name_start,
         entry->method_name_len,
-        "%s%c%s", class_name, method_sep, method_name_cstr
+        "%s%c%s\n", class_name, method_sep, method_name_cstr
     );
+    entry->method_name_len -= 1;
 
-    entry->caller_file_start = 0;
-    entry->caller_file_len = 0;
+    add_stringf(
+        &trace->strings,
+        entry->caller_file_start,
+        entry->caller_file_len,
+        "%s\n", trace->current_file_name
+    );
     entry->caller_line_number = trace->current_line_number;
-    entry->callee_file_start = 0;
-    entry->callee_file_len = 0;
+    entry->caller_file_len -= 1;
+
+    add_stringf(
+        &trace->strings,
+        entry->callee_file_start,
+        entry->callee_file_len,
+        "%s\n", source_file_cstr
+    );
     entry->callee_line_number = source_line;
+    entry->callee_file_len -= 1;
 
     trace->header.i += 64;
 
