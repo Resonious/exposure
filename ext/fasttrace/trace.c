@@ -20,29 +20,6 @@ const unsigned int kSingleton = kClassSingleton | kModuleSingleton |
  *    the header file. This contains class names, method names, file locations.
  */
 
-const unsigned int HEADER_TYPE_CALL = 1;
-const unsigned int HEADER_TYPE_RETURN = 2;
-
-/*
- * NOTE: this struct needs to have a byte size that is a power of 2.
- */
-typedef struct trace_header_t {
-    unsigned long long type : 32;
-
-    unsigned long long method_name_start : 64;
-    unsigned long long method_name_len : 32;
-
-    unsigned long long caller_file_start : 64;
-    unsigned long long caller_file_len : 32;
-    unsigned long long caller_line_number : 32;
-
-    unsigned long long callee_file_start : 64;
-    unsigned long long callee_file_len : 32;
-    unsigned long long callee_line_number : 32;
-
-    /* TODO: 16 more bytes... */
-} __attribute__ ((__packed__)) trace_header_t;
-
 static unsigned int ruby_event_to_header_type(rb_event_flag_t event) {
     switch (event) {
     case RUBY_EVENT_CALL:
@@ -363,6 +340,7 @@ static void handle_call_or_return_event(VALUE tracepoint, trace_t *trace) {
     );
     entry->callee_line_number = source_line;
     entry->callee_file_len -= 1;
+    entry->timestamp = measure_wall_time();
 
     trace->header.i += 64;
 

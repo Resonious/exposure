@@ -5,6 +5,31 @@
 #include "measure.h"
 #include <stdio.h>
 
+#define HEADER_TYPE_CALL 1
+#define HEADER_TYPE_RETURN 2
+
+/*
+ * NOTE: this struct needs to have a byte size that is a power of 2.
+ */
+typedef struct trace_header_t {
+    unsigned long long type : 32;
+
+    unsigned long long method_name_start : 64;
+    unsigned long long method_name_len : 32;
+
+    unsigned long long caller_file_start : 64;
+    unsigned long long caller_file_len : 32;
+    unsigned long long caller_line_number : 32;
+
+    unsigned long long callee_file_start : 64;
+    unsigned long long callee_file_len : 32;
+    unsigned long long callee_line_number : 32;
+
+    double timestamp;
+
+    /* TODO: 8 more bytes... */
+} __attribute__ ((__packed__)) trace_header_t;
+
 typedef struct trace_file_t {
     /* file handle, should be rw+ */
     FILE *file;
