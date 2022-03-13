@@ -14,26 +14,26 @@ const unsigned int kSingleton = kClassSingleton | kModuleSingleton |
  * ==============================
  *
  * To send traces to the viewer app, we will use 2 files:
- * 1. The "header" file - this is a big in-place array of fixed-sized offsets
+ * 1. The "entries" file - this is a big in-place array of fixed-sized offsets
  *    into ...
  * 2. The "data" file. This is a "heap" of variable-sized data, pointed to by
- *    the header file. This contains class names, method names, file locations.
+ *    the entries file. This contains class names, method names, file locations.
  */
 
-static unsigned int ruby_event_to_header_type(rb_event_flag_t event) {
+static unsigned int ruby_event_to_entry_type(rb_event_flag_t event) {
     switch (event) {
     case RUBY_EVENT_CALL:
-        return HEADER_TYPE_CALL;
+        return ENTRY_TYPE_CALL;
     case RUBY_EVENT_RETURN:
-        return HEADER_TYPE_RETURN;
+        return ENTRY_TYPE_RETURN;
     case RUBY_EVENT_B_CALL:
-        return HEADER_TYPE_CALL;
+        return ENTRY_TYPE_CALL;
     case RUBY_EVENT_B_RETURN:
-        return HEADER_TYPE_RETURN;
+        return ENTRY_TYPE_RETURN;
     case RUBY_EVENT_C_CALL:
-        return HEADER_TYPE_CALL;
+        return ENTRY_TYPE_CALL;
     case RUBY_EVENT_C_RETURN:
-        return HEADER_TYPE_RETURN;
+        return ENTRY_TYPE_RETURN;
     default:
         return 0;
     }
@@ -115,14 +115,14 @@ static void trace_mark(void *data) {
 static void trace_free(void *data) {
     trace_t *trace = (trace_t*)data;
 
-    if (trace->header.data) {
-        trace_file_finalize(&trace->header);
+    if (trace->entries.data) {
+        trace_file_finalize(&trace->entries);
     }
     if (trace->strings.data) {
         trace_file_finalize(&trace->strings);
     }
-    if (trace->header.file) {
-        fclose(trace->header.file);
+    if (trace->entries.file) {
+        fclose(trace->entries.file);
     }
     if (trace->strings.file) {
         fclose(trace->strings.file);
@@ -158,11 +158,11 @@ static VALUE trace_allocate(VALUE klass) {
     result = TypedData_Make_Struct(klass, trace_t, &trace_type, trace);
     trace->tracepoint = Qnil;
 
-    trace->header.file = NULL;
-    trace->header.data = NULL;
-    trace->header.i = 0;
-    trace->header.offset = 0;
-    trace->header.len = 0;
+    trace->entries.file = NULL;
+    trace->entries.data = NULL;
+    trace->entries.i = 0;
+    trace->entries.offset = 0;
+    trace->entries.len = 0;
 
     trace->strings.file = NULL;
     trace->strings.data = NULL;
@@ -308,12 +308,11 @@ static void handle_call_or_return_event(VALUE tracepoint, trace_t *trace) {
     if (class_flags & kSingleton) method_sep = '.';
     else                          method_sep = '#';
 
-    /* Put the actual trace event into the header file
-     * (man why do I call it header...) */
-    trace_header_t *entry = (trace_header_t *)
-        (trace->header.data + (trace->header.i - trace->header.offset));
+    /* Put the actual trace event into the entries file */
+    trace_entry_t *entry = (trace_entry_t *)
+        (trace->entries.data + (trace->entries.i - trace->entries.offset));
 
-    entry->type = ruby_event_to_header_type(event);
+    entry->type = ruby_event_to_entry_type(event);
 
     add_stringf(
         &trace->strings,
@@ -342,16 +341,16 @@ static void handle_call_or_return_event(VALUE tracepoint, trace_t *trace) {
     entry->callee_file_len -= 1;
     entry->timestamp = measure_wall_time();
 
-    trace->header.i += 64;
+    trace->entries.i += 64;
 
-    /* Re-adjust header mapping once we run out of space */
-    if (trace->header.i >= trace->header.len) {
-        trace_file_resize(&trace->header, trace->header.len * 2);
+    /* Re-adjust entries mapping once we run out of space */
+    if (trace->entries.i >= trace->entries.len) {
+        trace_file_resize(&trace->entries, trace->entries.len * 2);
     }
 
     return;
     fprintf(
-        trace->header.file, "%2lu:%2f\t%-8s\t%s%c%s\t%s:%2d\n",
+        trace->entries.file, "%2lu:%2f\t%-8s\t%s%c%s\t%s:%2d\n",
         FIX2ULONG(fiber), measure_wall_time(),
         event_name, class_name, method_sep, method_name_cstr, source_file_cstr, source_line
     );
@@ -379,28 +378,28 @@ static void event_hook(VALUE tracepoint, void *data) {
  * =====================
  */
 
-static VALUE trace_initialize(VALUE self, VALUE trace_header_name) {
+static VALUE trace_initialize(VALUE self, VALUE trace_entries_filename) {
     trace_t *trace = RTYPEDDATA_DATA(self);
-    const char *trace_header_name_cstr = StringValuePtr(trace_header_name);
+    const char *trace_entries_filename_cstr = StringValuePtr(trace_entries_filename);
 
-    VALUE trace_data_name = rb_str_new(trace_header_name_cstr, RSTRING_LEN(trace_header_name));
+    VALUE trace_data_name = rb_str_new(trace_entries_filename_cstr, RSTRING_LEN(trace_entries_filename));
     rb_str_append(trace_data_name, rb_str_new_literal(".strings"));
     const char *trace_data_name_cstr = StringValuePtr(trace_data_name);
 
-    trace->header.file = fopen(trace_header_name_cstr, "wb+");
+    trace->entries.file = fopen(trace_entries_filename_cstr, "wb+");
     trace->strings.file = fopen(trace_data_name_cstr, "wb+");
 
     /* Just to make sure I know what I'm doing... */
     trace->strings.len = PAGE_SIZE;
     trace_file_map_memory(&trace->strings);
 
-    trace->header.len = PAGE_SIZE;
-    trace_file_map_memory(&trace->header);
+    trace->entries.len = PAGE_SIZE;
+    trace_file_map_memory(&trace->entries);
 
     trace->strings_table = st_init_strtable_with_size(4096);
 
-    if (sizeof(trace_header_t) > 64) {
-        rb_raise(rb_eRuntimeError, "Trace header not within 64 bytes? %ld", sizeof(trace_header_t));
+    if (sizeof(trace_entry_t) > 64) {
+        rb_raise(rb_eRuntimeError, "Trace entry struct not within 64 bytes? %ld", sizeof(trace_entry_t));
     }
 
     return self;

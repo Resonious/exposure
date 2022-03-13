@@ -5,13 +5,13 @@
 #include "measure.h"
 #include <stdio.h>
 
-#define HEADER_TYPE_CALL 1
-#define HEADER_TYPE_RETURN 2
+#define ENTRY_TYPE_CALL 1
+#define ENTRY_TYPE_RETURN 2
 
 /*
  * NOTE: this struct needs to have a byte size that is a power of 2.
  */
-typedef struct trace_header_t {
+typedef struct trace_entry_t {
     unsigned long long type : 32;
 
     unsigned long long method_name_start : 64;
@@ -28,7 +28,7 @@ typedef struct trace_header_t {
     double timestamp;
 
     /* TODO: 8 more bytes... */
-} __attribute__ ((__packed__)) trace_header_t;
+} __attribute__ ((__packed__)) trace_entry_t;
 
 typedef struct trace_file_t {
     /* file handle, should be rw+ */
@@ -53,7 +53,7 @@ typedef struct trace_file_t {
 typedef struct trace_t {
     VALUE tracepoint;
 
-    trace_file_t header;
+    trace_file_t entries;
     trace_file_t strings;
 
     st_table *strings_table;
