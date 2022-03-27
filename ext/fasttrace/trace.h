@@ -54,9 +54,12 @@ typedef struct trace_t {
     VALUE tracepoint;
 
     trace_file_t entries;
-    trace_file_t strings;
+    trace_file_t returns;
+    trace_file_t locals;
 
     st_table *strings_table;
+
+    VALUE project_root;
 
     VALUE current_file_name;
     int current_line_number;
