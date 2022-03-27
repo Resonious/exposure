@@ -1,0 +1,3 @@
+[submodule "filedict"]
+	path = filedict
+	url = git@github.com:Resonious/filedict.git

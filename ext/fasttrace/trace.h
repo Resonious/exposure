@@ -5,6 +5,10 @@
 #include "measure.h"
 #include <stdio.h>
 
+#define FILEDICT_IMPL 1
+#include "../../filedict/filedict.h"
+#undef FILEDICT_IMPL
+
 #define ENTRY_TYPE_CALL 1
 #define ENTRY_TYPE_RETURN 2
 
@@ -54,8 +58,8 @@ typedef struct trace_t {
     VALUE tracepoint;
 
     trace_file_t entries;
-    trace_file_t returns;
-    trace_file_t locals;
+    filedict_t returns;
+    filedict_t locals;
 
     st_table *strings_table;
 

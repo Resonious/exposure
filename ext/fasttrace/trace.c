@@ -3,6 +3,7 @@
 #include <unistd.h>
 #include <errno.h>
 #include <sys/mman.h>
+#include "../../filedict/filedict.h"
 
 ID sym_local_variables;
 ID sym_local_variable_get;
@@ -122,24 +123,14 @@ static void trace_free(void *data) {
     if (trace->entries.data) {
         trace_file_finalize(&trace->entries);
     }
-    if (trace->returns.data) {
-        trace_file_finalize(&trace->returns);
-    }
-    if (trace->locals.data) {
-        trace_file_finalize(&trace->locals);
-    }
     if (trace->entries.file) {
         fclose(trace->entries.file);
-    }
-    if (trace->returns.file) {
-        fclose(trace->returns.file);
-    }
-    if (trace->locals.file) {
-        fclose(trace->locals.file);
     }
     if (trace->strings_table) {
         st_free_table(trace->strings_table);
     }
+    filedict_deinit(&trace->returns);
+    filedict_deinit(&trace->locals);
 
     xfree(trace);
 }
@@ -174,17 +165,8 @@ static VALUE trace_allocate(VALUE klass) {
     trace->entries.offset = 0;
     trace->entries.len = 0;
 
-    trace->returns.file = NULL;
-    trace->returns.data = NULL;
-    trace->returns.i = 0;
-    trace->returns.offset = 0;
-    trace->returns.len = 0;
-
-    trace->locals.file = NULL;
-    trace->locals.data = NULL;
-    trace->locals.i = 0;
-    trace->locals.offset = 0;
-    trace->locals.len = 0;
+    filedict_init(&trace->returns);
+    filedict_init(&trace->locals);
 
     trace->strings_table = NULL;
 
@@ -291,37 +273,16 @@ static int should_record(trace_t *trace, rb_trace_arg_t *trace_arg) {
     return 1;
 }
 
-#define add_stringf(IN_STRINGS, OUT_START, OUT_LEN, FMT, ...) \
-do { \
-    char *buffer; \
-    size_t start; \
-    int len; \
-    while (1) { \
-        buffer = (IN_STRINGS)->data + ((IN_STRINGS)->i - (IN_STRINGS)->offset); \
-        len = snprintf(buffer, (IN_STRINGS)->len - (IN_STRINGS)->i, (FMT), __VA_ARGS__); \
-        if ((IN_STRINGS)->i + len >= (IN_STRINGS)->len) { \
-            (IN_STRINGS)->i = (IN_STRINGS)->len; \
-            trace_file_resize((IN_STRINGS), (IN_STRINGS)->len * 2); \
-            continue; \
-        } \
-        start = (IN_STRINGS)->i; \
-        (IN_STRINGS)->i += len; \
-        break; \
-    } \
-    OUT_START = start; \
-    OUT_LEN = len; \
-} while (0)
-
 static void write_local_variables(
     trace_t *trace,
     rb_trace_arg_t *trace_arg,
     const char *class_name, char method_sep, const char *method_name
 ) {
-    int str_start, str_len;
     long i, len;
     const char *local_name, *local_type;
     unsigned int variable_klass_flags;
     VALUE binding, local_variables, variable_name, variable, variable_klass;
+    char local_var_key[FILEDICT_KEY_SIZE];
 
     binding = rb_tracearg_binding(trace_arg);
     if (binding == Qnil) return;
@@ -347,12 +308,12 @@ static void write_local_variables(
         local_name = rb_id2name(SYM2ID(variable_name));
         local_type = get_class_name(variable_klass, &variable_klass_flags);
 
-        add_stringf(
-            &trace->locals,
-            str_start,
-            str_len,
-            "%s%c%s%%%s -> %s\n", class_name, method_sep, method_name, local_name, local_type
+        sprintf(
+            local_var_key,
+            "%s%c%s%%%s",
+            class_name, method_sep, method_name, local_name
         );
+        filedict_insert_unique(&trace->locals, local_var_key, local_type);
     }
 }
 
@@ -366,6 +327,7 @@ static void handle_call_or_return_event(VALUE tracepoint, trace_t *trace) {
     const char *method_name_cstr;
     const char *return_type;
     char method_sep;
+    char method_key[FILEDICT_KEY_SIZE];
 
     trace_arg = rb_tracearg_from_tracepoint(tracepoint);
 
@@ -393,13 +355,12 @@ static void handle_call_or_return_event(VALUE tracepoint, trace_t *trace) {
     return_klass   = rb_obj_class(return_value);
     return_type    = get_class_name(return_klass, &return_type_flags);
 
-    int str_start, str_len;
-    add_stringf(
-        &trace->returns,
-        str_start,
-        str_len,
-        "%s%c%s -> %s\n", class_name, method_sep, method_name_cstr, return_type
+    sprintf(
+        method_key,
+        "%s%c%s",
+        class_name, method_sep, method_name_cstr
     );
+    filedict_insert_unique(&trace->returns, method_key, return_type);
     write_local_variables(trace, trace_arg, class_name, method_sep, method_name_cstr);
 }
 
@@ -439,17 +400,10 @@ static VALUE trace_initialize(VALUE self, VALUE trace_entries_filename, VALUE pr
 
     trace->entries.file = fopen(trace_entries_filename_cstr, "wb+");
 
-    trace->returns.file = fopen(trace_returns_path_cstr, "wb+");
-    trace->locals.file = fopen(trace_locals_path_cstr, "wb+");
+    filedict_open_new(&trace->returns, trace_returns_path_cstr);
+    filedict_open_new(&trace->locals, trace_locals_path_cstr);
 
     trace->project_root = project_root;
-
-    /* Just to make sure I know what I'm doing... */
-    trace->returns.len = PAGE_SIZE;
-    trace_file_map_memory(&trace->returns);
-
-    trace->locals.len = PAGE_SIZE;
-    trace_file_map_memory(&trace->locals);
 
     trace->entries.len = PAGE_SIZE;
     trace_file_map_memory(&trace->entries);
