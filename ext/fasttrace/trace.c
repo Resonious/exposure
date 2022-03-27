@@ -308,8 +308,9 @@ static void write_local_variables(
         local_name = rb_id2name(SYM2ID(variable_name));
         local_type = get_class_name(variable_klass, &variable_klass_flags);
 
-        sprintf(
+        snprintf(
             local_var_key,
+            sizeof(local_var_key),
             "%s%c%s%%%s",
             class_name, method_sep, method_name, local_name
         );
@@ -355,8 +356,9 @@ static void handle_call_or_return_event(VALUE tracepoint, trace_t *trace) {
     return_klass   = rb_obj_class(return_value);
     return_type    = get_class_name(return_klass, &return_type_flags);
 
-    sprintf(
+    snprintf(
         method_key,
+        sizeof(method_key),
         "%s%c%s",
         class_name, method_sep, method_name_cstr
     );
