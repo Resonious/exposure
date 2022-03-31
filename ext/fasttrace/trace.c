@@ -334,7 +334,7 @@ static void handle_call_or_return_event(VALUE tracepoint, trace_t *trace) {
 
     if (!should_record(trace, trace_arg)) return;
 
-    event     = rb_tracearg_event_flag(trace_arg);
+    event = rb_tracearg_event_flag(trace_arg);
 
     callee         = rb_tracearg_callee_id(trace_arg);
     klass          = rb_tracearg_defined_class(trace_arg);
@@ -352,9 +352,9 @@ static void handle_call_or_return_event(VALUE tracepoint, trace_t *trace) {
     entry->type = ruby_event_to_entry_type(event);
 
     /* From here on we assume that this is a RETURN event */
-    return_value   = rb_tracearg_return_value(trace_arg);
-    return_klass   = rb_obj_class(return_value);
-    return_type    = get_class_name(return_klass, &return_type_flags);
+    return_value = rb_tracearg_return_value(trace_arg);
+    return_klass = rb_obj_class(return_value);
+    return_type  = get_class_name(return_klass, &return_type_flags);
 
     snprintf(
         method_key,
@@ -402,8 +402,9 @@ static VALUE trace_initialize(VALUE self, VALUE trace_entries_filename, VALUE pr
 
     trace->entries.file = fopen(trace_entries_filename_cstr, "wb+");
 
-    filedict_open_new(&trace->returns, trace_returns_path_cstr);
-    filedict_open_new(&trace->locals, trace_locals_path_cstr);
+    /* We expect these traces to be large */
+    filedict_open_f(&trace->returns, trace_returns_path_cstr, O_CREAT | O_RDWR, 1024 << 5);
+    filedict_open_f(&trace->locals, trace_locals_path_cstr, O_CREAT | O_RDWR, 1024 << 5);
 
     trace->project_root = project_root;
 
