@@ -219,30 +219,88 @@ static const char* get_event_name(rb_event_flag_t event) {
     }
 }
 
-static const char *get_class_name(VALUE klass, unsigned int* flags) {
-    VALUE attached;
+/*
+ * Straight from ruby-prof... then modified
+ */
+static VALUE
+figure_singleton_name(VALUE klass)
+{
+    volatile VALUE attached, super;
+    volatile VALUE attached_str;
+    volatile VALUE result = Qnil;
+
+    /* We have come across a singleton object. First
+       figure out what it is attached to.*/
+    attached = rb_iv_get(klass, "__attached__");
+
+    /* Is this a singleton class acting as a metaclass? */
+    if (BUILTIN_TYPE(attached) == T_CLASS)
+    {
+        result = rb_class_name(attached);
+    }
+
+    /* Is this for singleton methods on a module? */
+    else if (BUILTIN_TYPE(attached) == T_MODULE)
+    {
+        result = rb_class_name(attached);
+    }
+
+    /* Is this for singleton methods on an object? */
+    else if (BUILTIN_TYPE(attached) == T_OBJECT)
+    {
+        /* Make sure to get the super class so that we don't
+           mistakenly grab a T_ICLASS which would lead to
+           unknown method errors. */
+        super = rb_class_superclass(klass);
+        result = rb_class_name(super);
+    }
+
+    /* Ok, this could be other things like an array made put onto
+       a singleton object (yeah, it happens, see the singleton
+       objects test case). */
+    else
+    {
+        result = rb_any_to_s(klass);
+    }
+
+    return result;
+}
+
+static VALUE
+klass_name(VALUE klass, unsigned int *flags)
+{
+    volatile VALUE result = Qnil;
     *flags = 0;
 
-    if (klass == 0 || klass == Qnil) {
-        return "nil";
+    if (klass == 0 || klass == Qnil)
+    {
+        result = rb_str_new2("[global]");
+    }
+    else if (BUILTIN_TYPE(klass) == T_MODULE)
+    {
+        result = rb_class_name(klass);
+    }
+    else if (BUILTIN_TYPE(klass) == T_CLASS && FL_TEST(klass, FL_SINGLETON))
+    {
+        *flags |= kSingleton;
+        result = figure_singleton_name(klass);
+    }
+    else if (BUILTIN_TYPE(klass) == T_CLASS)
+    {
+        result = rb_class_name(klass);
+    }
+    else
+    {
+        /* Should never happen. */
+        result = rb_str_new2("[unknown]");
     }
 
-    if (BUILTIN_TYPE(klass) == T_CLASS && FL_TEST(klass, FL_SINGLETON)) {
-        /* This is a class singleton. Something like MyClass.my_method */
-        *flags = kClassSingleton;
-        attached = rb_iv_get(klass, "__attached__");
+    return result;
+}
 
-        switch (BUILTIN_TYPE(attached)) {
-        case T_MODULE:
-            *flags = kModuleSingleton;
-        case T_CLASS:
-            klass = attached;
-            break;
-        default: break;
-        }
-    }
-
-    return rb_class2name(klass);
+static const char *get_class_name(VALUE klass, unsigned int *flags) {
+    VALUE name = klass_name(klass, flags);
+    return StringValuePtr(name);
 }
 
 static void handle_line_event(VALUE tracepoint, trace_t *trace) {
