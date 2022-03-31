@@ -403,8 +403,8 @@ static VALUE trace_initialize(VALUE self, VALUE trace_entries_filename, VALUE pr
     trace->entries.file = fopen(trace_entries_filename_cstr, "wb+");
 
     /* We expect these traces to be large */
-    filedict_open_f(&trace->returns, trace_returns_path_cstr, O_CREAT | O_RDWR, 1024 << 5);
-    filedict_open_f(&trace->locals, trace_locals_path_cstr, O_CREAT | O_RDWR, 1024 << 5);
+    filedict_open_f(&trace->returns, trace_returns_path_cstr, O_CREAT | O_RDWR, 4096 * 5);
+    filedict_open_f(&trace->locals, trace_locals_path_cstr, O_CREAT | O_RDWR, 4096 * 5);
 
     trace->project_root = project_root;
 
