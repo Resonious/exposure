@@ -5,11 +5,9 @@
 #include <sys/mman.h>
 #include "../../filedict/filedict.h"
 
-ID sym_local_variables;
-ID sym_local_variable_get;
+ID id_local_variables;
+ID id_local_variable_get;
 VALUE cTrace;
-const unsigned int kSingleton = kClassSingleton | kModuleSingleton |
-                                kObjectSingleton | kOtherSingleton;
 
 /*
  * ==============================
@@ -225,9 +223,9 @@ static const char* get_event_name(rb_event_flag_t event) {
 static VALUE
 figure_singleton_name(VALUE klass)
 {
-    volatile VALUE attached, super;
-    volatile VALUE attached_str;
-    volatile VALUE result = Qnil;
+    VALUE attached, super;
+    VALUE attached_str;
+    VALUE result = Qnil;
 
     /* We have come across a singleton object. First
        figure out what it is attached to.*/
@@ -267,10 +265,9 @@ figure_singleton_name(VALUE klass)
 }
 
 static VALUE
-klass_name(VALUE klass, unsigned int *flags)
+klass_name(VALUE klass)
 {
-    volatile VALUE result = Qnil;
-    *flags = 0;
+    VALUE result = Qnil;
 
     if (klass == 0 || klass == Qnil)
     {
@@ -282,7 +279,6 @@ klass_name(VALUE klass, unsigned int *flags)
     }
     else if (BUILTIN_TYPE(klass) == T_CLASS && FL_TEST(klass, FL_SINGLETON))
     {
-        *flags |= kSingleton;
         result = figure_singleton_name(klass);
     }
     else if (BUILTIN_TYPE(klass) == T_CLASS)
@@ -298,9 +294,15 @@ klass_name(VALUE klass, unsigned int *flags)
     return result;
 }
 
-static const char *get_class_name(VALUE klass, unsigned int *flags) {
-    VALUE name = klass_name(klass, flags);
-    return StringValuePtr(name);
+static const char *get_class_name(VALUE klass) {
+    VALUE name = rb_rescue(klass_name, klass, NULL, Qnil);
+
+    if (name == Qnil) {
+        return "[error]";
+    }
+    else {
+        return StringValuePtr(name);
+    }
 }
 
 static void handle_line_event(VALUE tracepoint, trace_t *trace) {
@@ -331,25 +333,29 @@ static int should_record(trace_t *trace, rb_trace_arg_t *trace_arg) {
     return 1;
 }
 
+static VALUE get_binding(VALUE tracepoint) {
+    rb_trace_arg_t *trace_arg = rb_tracearg_from_tracepoint(tracepoint);
+    return rb_tracearg_binding(trace_arg);
+}
+
 static void write_local_variables(
     trace_t *trace,
-    rb_trace_arg_t *trace_arg,
+    VALUE tracepoint,
     const char *class_name, char method_sep, const char *method_name
 ) {
     long i, len;
     const char *local_name, *local_type;
-    unsigned int variable_klass_flags;
     VALUE binding, local_variables, variable_name, variable, variable_klass;
     char local_var_key[FILEDICT_KEY_SIZE];
 
-    binding = rb_tracearg_binding(trace_arg);
+    binding = rb_rescue(get_binding, tracepoint, NULL, Qnil);
     if (binding == Qnil) return;
 
     /*
      * local_variables = binding.local_variables
      * len = local_variables.size
      */
-    local_variables = rb_funcall(binding, sym_local_variables, 0);
+    local_variables = rb_funcall(binding, id_local_variables, 0);
     len = RARRAY_LEN(local_variables);
 
     for (i = 0; i < len; ++i) {
@@ -361,10 +367,10 @@ static void write_local_variables(
          * local_type = variable_klass.name
          */
         variable_name = RARRAY_AREF(local_variables, i);
-        variable = rb_funcall(binding, sym_local_variable_get, 1, variable_name);
+        variable = rb_funcall(binding, id_local_variable_get, 1, variable_name);
         variable_klass = rb_obj_class(variable);
         local_name = rb_id2name(SYM2ID(variable_name));
-        local_type = get_class_name(variable_klass, &variable_klass_flags);
+        local_type = get_class_name(variable_klass);
 
         snprintf(
             local_var_key,
@@ -381,7 +387,7 @@ static void handle_call_or_return_event(VALUE tracepoint, trace_t *trace) {
     rb_event_flag_t event;
 
     VALUE callee, klass, return_value, return_klass;
-    unsigned int class_flags, return_type_flags;
+    int is_singleton = 0;
     const char *class_name;
     const char *method_name_cstr;
     const char *return_type;
@@ -396,12 +402,17 @@ static void handle_call_or_return_event(VALUE tracepoint, trace_t *trace) {
 
     callee         = rb_tracearg_callee_id(trace_arg);
     klass          = rb_tracearg_defined_class(trace_arg);
-    class_name     = get_class_name(klass, &class_flags);
+
+    /* Class#new is a nuisance because it generates a lot of different return types. */
+    if (klass == rb_cClass) return;
+
+    class_name     = get_class_name(klass);
+    is_singleton   = BUILTIN_TYPE(klass) == T_CLASS && FL_TEST(klass, FL_SINGLETON);
 
     method_name_cstr = (callee != Qnil ? rb_id2name(SYM2ID(callee)) : "<none>");
 
-    if (class_flags & kSingleton) method_sep = '.';
-    else                          method_sep = '#';
+    if (is_singleton) method_sep = '.';
+    else              method_sep = '#';
 
     /* Put the actual trace event into the entries file */
     trace_entry_t *entry = (trace_entry_t *)
@@ -412,7 +423,7 @@ static void handle_call_or_return_event(VALUE tracepoint, trace_t *trace) {
     /* From here on we assume that this is a RETURN event */
     return_value = rb_tracearg_return_value(trace_arg);
     return_klass = rb_obj_class(return_value);
-    return_type  = get_class_name(return_klass, &return_type_flags);
+    return_type  = get_class_name(return_klass);
 
     snprintf(
         method_key,
@@ -421,7 +432,7 @@ static void handle_call_or_return_event(VALUE tracepoint, trace_t *trace) {
         class_name, method_sep, method_name_cstr
     );
     filedict_insert_unique(&trace->returns, method_key, return_type);
-    write_local_variables(trace, trace_arg, class_name, method_sep, method_name_cstr);
+    write_local_variables(trace, tracepoint, class_name, method_sep, method_name_cstr);
 }
 
 /*
@@ -509,6 +520,6 @@ void ft_init_trace(void) {
     rb_define_method(cTrace, "initialize", trace_initialize, 2);
     rb_define_method(cTrace, "tracepoint", trace_tracepoint, 0);
 
-    sym_local_variables = rb_intern("local_variables");
-    sym_local_variable_get = rb_intern("local_variable_get");
+    id_local_variables = rb_intern("local_variables");
+    id_local_variable_get = rb_intern("local_variable_get");
 }
