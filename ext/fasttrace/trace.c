@@ -406,6 +406,12 @@ static void handle_call_or_return_event(VALUE tracepoint, trace_t *trace) {
     /* Class#new is a nuisance because it generates a lot of different return types. */
     if (klass == rb_cClass) return;
 
+    /* If the class is an anonymous module then we want to actually record on the class itself. */
+    if (BUILTIN_TYPE(klass) == T_MODULE && rb_mod_name(klass) == Qnil) {
+        VALUE self = rb_tracearg_self(trace_arg);
+        if (self != Qnil) klass = rb_obj_class(self);
+    }
+
     class_name     = get_class_name(klass);
     is_singleton   = BUILTIN_TYPE(klass) == T_CLASS && FL_TEST(klass, FL_SINGLETON);
 

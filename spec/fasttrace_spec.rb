@@ -32,7 +32,10 @@ RSpec.describe Fasttrace do
   it 'does something useful' do
     expect(Fasttrace::Trace).to be_a Class
 
-    tp = Fasttrace::Trace.new('tmp/test.out')
+    File.delete 'tmp/test.out.returns' rescue nil
+    File.delete 'tmp/test.out.locals' rescue nil
+
+    tp = Fasttrace::Trace.new('tmp/test.out', nil)
     expect(tp).to be_a Fasttrace::Trace
     expect(tp.tracepoint).to be_a TracePoint
 
@@ -45,11 +48,20 @@ RSpec.describe Fasttrace do
         'singleton method'
       end
 
+      test_class.extend(
+        Module.new do
+          def on_anonymous_module
+            'anonymous module method'
+          end
+        end
+      )
+
       results << TestClass.on_class
       results << test_class.on_instance
       results << test_class.on_base
       results << test_class.on_module
       results << test_class.on_singleton
+      results << test_class.on_anonymous_module
     ensure
       tp.tracepoint.disable
     end
@@ -59,7 +71,8 @@ RSpec.describe Fasttrace do
       'instance method',
       'base class instance method',
       'module method',
-      'singleton method'
+      'singleton method',
+      'anonymous module method'
     ]
   end
 end
