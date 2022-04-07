@@ -406,12 +406,6 @@ static void handle_call_or_return_event(VALUE tracepoint, trace_t *trace) {
     /* Class#new is a nuisance because it generates a lot of different return types. */
     if (klass == rb_cClass) return;
 
-    /* If the class is an anonymous module then we want to actually record on the class itself. */
-    if (BUILTIN_TYPE(klass) == T_MODULE && rb_mod_name(klass) == Qnil) {
-        VALUE self = rb_tracearg_self(trace_arg);
-        if (self != Qnil) klass = rb_obj_class(self);
-    }
-
     class_name     = get_class_name(klass);
     is_singleton   = BUILTIN_TYPE(klass) == T_CLASS && FL_TEST(klass, FL_SINGLETON);
 
@@ -420,17 +414,12 @@ static void handle_call_or_return_event(VALUE tracepoint, trace_t *trace) {
     if (is_singleton) method_sep = '.';
     else              method_sep = '#';
 
-    /* Put the actual trace event into the entries file */
-    trace_entry_t *entry = (trace_entry_t *)
-        (trace->entries.data + (trace->entries.i - trace->entries.offset));
-
-    entry->type = ruby_event_to_entry_type(event);
-
     /* From here on we assume that this is a RETURN event */
     return_value = rb_tracearg_return_value(trace_arg);
     return_klass = rb_obj_class(return_value);
     return_type  = get_class_name(return_klass);
 
+record_entry:
     snprintf(
         method_key,
         sizeof(method_key),
@@ -439,6 +428,16 @@ static void handle_call_or_return_event(VALUE tracepoint, trace_t *trace) {
     );
     filedict_insert_unique(&trace->returns, method_key, return_type);
     write_local_variables(trace, tracepoint, class_name, method_sep, method_name_cstr);
+
+    /* Record for both module and class */
+    if (!is_singleton && BUILTIN_TYPE(klass) == T_MODULE) {
+        VALUE self = rb_tracearg_self(trace_arg);
+        if (self == Qnil) return;
+
+        klass = rb_obj_class(self);
+        class_name = get_class_name(klass);
+        goto record_entry;
+    }
 }
 
 /*
