@@ -295,7 +295,16 @@ klass_name(VALUE klass)
 }
 
 static const char *get_class_name(VALUE klass) {
-    VALUE name = rb_rescue(klass_name, klass, NULL, Qnil);
+    VALUE name;
+
+    if (klass == rb_cNilClass) {
+        return "nil";
+    }
+    else if (klass == rb_cFalseClass || klass == rb_cTrueClass) {
+        return "Boolean";
+    }
+
+    name = rb_rescue(klass_name, klass, NULL, Qnil);
 
     if (name == Qnil) {
         return "[error]";
