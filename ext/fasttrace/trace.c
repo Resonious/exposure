@@ -9,91 +9,7 @@ ID id_local_variables;
 ID id_local_variable_get;
 VALUE cTrace;
 
-/*
- * ==============================
- * Data structures for IPC
- * ==============================
- *
- * To send traces to the viewer app, we will use 2 files:
- * 1. The "entries" file - this is a big in-place array of fixed-sized offsets
- *    into ...
- * 2. The "data" file. This is a "heap" of variable-sized data, pointed to by
- *    the entries file. This contains class names, method names, file locations.
- */
-
-static unsigned int ruby_event_to_entry_type(rb_event_flag_t event) {
-    switch (event) {
-    case RUBY_EVENT_CALL:
-        return ENTRY_TYPE_CALL;
-    case RUBY_EVENT_RETURN:
-        return ENTRY_TYPE_RETURN;
-    case RUBY_EVENT_B_CALL:
-        return ENTRY_TYPE_CALL;
-    case RUBY_EVENT_B_RETURN:
-        return ENTRY_TYPE_RETURN;
-    case RUBY_EVENT_C_CALL:
-        return ENTRY_TYPE_CALL;
-    case RUBY_EVENT_C_RETURN:
-        return ENTRY_TYPE_RETURN;
-    default:
-        return 0;
-    }
-}
-
 static size_t PAGE_SIZE;
-
-static void trace_file_map_memory(trace_file_t *file) {
-    assert(file);
-    if (file->file == NULL) {
-        rb_raise(rb_eRuntimeError, "File not open: %s", strerror(errno));
-    }
-
-    ftruncate(fileno(file->file), file->len);
-    file->data = mmap(
-        NULL,
-        file->len - file->offset,
-        PROT_READ | PROT_WRITE,
-        MAP_SHARED,
-        fileno(file->file),
-        file->offset
-    );
-
-    if (file->data == MAP_FAILED) {
-        rb_raise(rb_eRuntimeError, "Failed to mmap: %s", strerror(errno));
-    }
-}
-
-static void trace_file_unmap_memory(trace_file_t *file) {
-    assert(file);
-    assert(file->file);
-    assert(file->data);
-
-    int result = munmap(file->data, file->len - file->offset);
-
-    if (result == -1) {
-        rb_raise(rb_eRuntimeError, "Failed to munmap: %s", strerror(errno));
-    }
-
-    file->data = NULL;
-}
-
-static void trace_file_resize(trace_file_t *file, size_t new_size) {
-    trace_file_unmap_memory(file);
-    file->offset = file->i;
-    file->len = new_size;
-    trace_file_map_memory(file);
-}
-
-/*
- * This unmaps the memory and truncates the file so that there's no extra zeros
- * at the end.
- */
-static void trace_file_finalize(trace_file_t *file) {
-    if (file->data) {
-        trace_file_unmap_memory(file);
-    }
-    ftruncate(fileno(file->file), file->i);
-}
 
 
 /*
@@ -118,12 +34,6 @@ static void trace_mark(void *data) {
 static void trace_free(void *data) {
     trace_t *trace = (trace_t*)data;
 
-    if (trace->entries.data) {
-        trace_file_finalize(&trace->entries);
-    }
-    if (trace->entries.file) {
-        fclose(trace->entries.file);
-    }
     if (trace->strings_table) {
         st_free_table(trace->strings_table);
     }
@@ -156,12 +66,6 @@ static VALUE trace_allocate(VALUE klass) {
 
     result = TypedData_Make_Struct(klass, trace_t, &trace_type, trace);
     trace->tracepoint = Qnil;
-
-    trace->entries.file = NULL;
-    trace->entries.data = NULL;
-    trace->entries.i = 0;
-    trace->entries.offset = 0;
-    trace->entries.len = 0;
 
     filedict_init(&trace->returns);
     filedict_init(&trace->locals);
@@ -490,22 +394,13 @@ static VALUE trace_initialize(VALUE self, VALUE trace_entries_filename, VALUE pr
     rb_str_append(trace_locals_path, rb_str_new_literal(".locals"));
     const char *trace_locals_path_cstr = StringValuePtr(trace_locals_path);
 
-    trace->entries.file = fopen(trace_entries_filename_cstr, "wb+");
-
     /* We expect these traces to be large */
     filedict_open_f(&trace->returns, trace_returns_path_cstr, O_CREAT | O_RDWR, 4096 * 5);
     filedict_open_f(&trace->locals, trace_locals_path_cstr, O_CREAT | O_RDWR, 4096 * 5);
 
     trace->project_root = project_root;
 
-    trace->entries.len = PAGE_SIZE;
-    trace_file_map_memory(&trace->entries);
-
     trace->strings_table = st_init_strtable_with_size(4096);
-
-    if (sizeof(trace_entry_t) > 64) {
-        rb_raise(rb_eRuntimeError, "Trace entry struct not within 64 bytes? %ld", sizeof(trace_entry_t));
-    }
 
     return self;
 }

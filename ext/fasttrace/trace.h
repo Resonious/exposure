@@ -9,55 +9,9 @@
 #include "../../filedict/filedict.h"
 #undef FILEDICT_IMPL
 
-#define ENTRY_TYPE_CALL 1
-#define ENTRY_TYPE_RETURN 2
-
-/*
- * NOTE: this struct needs to have a byte size that is a power of 2.
- */
-typedef struct trace_entry_t {
-    unsigned long long type : 32;
-
-    unsigned long long method_name_start : 64;
-    unsigned long long method_name_len : 32;
-
-    unsigned long long caller_file_start : 64;
-    unsigned long long caller_file_len : 32;
-    unsigned long long caller_line_number : 32;
-
-    unsigned long long callee_file_start : 64;
-    unsigned long long callee_file_len : 32;
-    unsigned long long callee_line_number : 32;
-
-    double timestamp;
-
-    /* TODO: 8 more bytes... */
-} __attribute__ ((__packed__)) trace_entry_t;
-
-typedef struct trace_file_t {
-    /* file handle, should be rw+ */
-    FILE *file;
-    /* mmapped data ptr */
-    void *data;
-
-    /*
-     * Current offset from the start of the file.
-     */
-    size_t i;
-    /*
-     * Offset of data ptr relative to start of file.
-     */
-    size_t offset;
-    /*
-     * Total size of file.
-     */
-    size_t len;
-} trace_file_t;
-
 typedef struct trace_t {
     VALUE tracepoint;
 
-    trace_file_t entries;
     filedict_t returns;
     filedict_t locals;
 
