@@ -34,9 +34,6 @@ static void trace_mark(void *data) {
 static void trace_free(void *data) {
     trace_t *trace = (trace_t*)data;
 
-    if (trace->strings_table) {
-        st_free_table(trace->strings_table);
-    }
     filedict_deinit(&trace->returns);
     filedict_deinit(&trace->locals);
 
@@ -69,8 +66,6 @@ static VALUE trace_allocate(VALUE klass) {
 
     filedict_init(&trace->returns);
     filedict_init(&trace->locals);
-
-    trace->strings_table = NULL;
 
     trace->project_root = Qnil;
 
@@ -399,8 +394,6 @@ static VALUE trace_initialize(VALUE self, VALUE trace_entries_filename, VALUE pr
     filedict_open_f(&trace->locals, trace_locals_path_cstr, O_CREAT | O_RDWR, 4096 * 5);
 
     trace->project_root = project_root;
-
-    trace->strings_table = st_init_strtable_with_size(4096);
 
     return self;
 }

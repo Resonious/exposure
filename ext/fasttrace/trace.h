@@ -15,8 +15,6 @@ typedef struct trace_t {
     filedict_t returns;
     filedict_t locals;
 
-    st_table *strings_table;
-
     VALUE project_root;
 
     VALUE current_file_name;
