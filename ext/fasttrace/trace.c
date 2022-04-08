@@ -323,7 +323,7 @@ static void handle_line_event(VALUE tracepoint, trace_t *trace) {
     trace->current_line_number = FIX2INT(rb_tracearg_lineno(trace_arg));
 }
 
-static int should_record(trace_t *trace, rb_trace_arg_t *trace_arg) {
+static int is_in_project_root(trace_t *trace, rb_trace_arg_t *trace_arg) {
     if (trace->project_root == Qnil) return 1;
 
     VALUE current_file_name_rstr = rb_tracearg_path(trace_arg);
@@ -405,14 +405,14 @@ static void handle_call_or_return_event(VALUE tracepoint, trace_t *trace) {
 
     trace_arg = rb_tracearg_from_tracepoint(tracepoint);
 
-    if (!should_record(trace, trace_arg)) return;
-
     event = rb_tracearg_event_flag(trace_arg);
 
     callee         = rb_tracearg_callee_id(trace_arg);
     klass          = rb_tracearg_defined_class(trace_arg);
 
     /* Class#new is a nuisance because it generates a lot of different return types. */
+    /* TODO: Array methods also tend to get rather large. Maybe simply putting a cap
+     * on how many return types a single method can hold is a better solution. */
     if (klass == rb_cClass) return;
 
     class_name     = get_class_name(klass);
@@ -436,9 +436,16 @@ record_entry:
         class_name, method_sep, method_name_cstr
     );
     filedict_insert_unique(&trace->returns, method_key, return_type);
-    write_local_variables(trace, tracepoint, class_name, method_sep, method_name_cstr);
 
-    /* Record for both module and class */
+    /*
+     * Analyzing locals has a pretty large performance penalty, so we try to only do
+     * it for local files.
+     */
+    if (is_in_project_root(trace, trace_arg)) {
+        write_local_variables(trace, tracepoint, class_name, method_sep, method_name_cstr);
+    }
+
+    /* For modules, we want data for both the module and the including class */
     if (!is_singleton && BUILTIN_TYPE(klass) == T_MODULE) {
         VALUE self = rb_tracearg_self(trace_arg);
         if (self == Qnil) return;
