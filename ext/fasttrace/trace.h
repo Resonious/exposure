@@ -19,8 +19,6 @@ typedef struct trace_t {
 
     VALUE current_file_name;
     int current_line_number;
-
-    int running;
 } trace_t;
 
 void ft_init_trace(void);
