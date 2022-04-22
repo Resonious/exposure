@@ -15,6 +15,15 @@ end
 class TestClass < TestBaseClass
   include TestModule
 
+  attr_reader :block
+
+  def initialize
+    @block = lambda do |block_arg|
+      "block(#{block_arg.inspect}) value"
+    end
+    super
+  end
+
   def self.on_class
     'class method'
   end
@@ -32,10 +41,10 @@ RSpec.describe Fasttrace do
   it 'does something useful' do
     expect(Fasttrace::Trace).to be_a Class
 
-    File.delete 'tmp/test.out.returns' rescue nil
-    File.delete 'tmp/test.out.locals' rescue nil
+    File.delete 'tmp/fasttrace.returns' rescue nil
+    File.delete 'tmp/fasttrace.locals' rescue nil
 
-    tp = Fasttrace::Trace.new('tmp/test.out', nil)
+    tp = Fasttrace::Trace.new('tmp', (File.absolute_path File.join __dir__, '..'))
     expect(tp).to be_a Fasttrace::Trace
     expect(tp.tracepoint).to be_a TracePoint
 
@@ -62,17 +71,19 @@ RSpec.describe Fasttrace do
       results << test_class.on_module
       results << test_class.on_singleton
       results << test_class.on_anonymous_module
+      results << test_class.block.call(self)
     ensure
       tp.tracepoint.disable
     end
 
-    expect(results).to eq [
+    expect(results).to match [
       'class method',
       'instance method',
       'base class instance method',
       'module method',
       'singleton method',
-      'anonymous module method'
+      'anonymous module method',
+      'block(#<RSpec::ExampleGroups::Fasttrace "does something useful" (./spec/fasttrace_spec.rb:41)>) value'
     ]
   end
 end

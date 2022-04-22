@@ -220,6 +220,31 @@ static void handle_line_event(VALUE tracepoint, trace_t *trace) {
     trace->current_line_number = FIX2INT(rb_tracearg_lineno(trace_arg));
 }
 
+/*
+ * This function takes file_path and returns the first position that isn't
+ * included in trace->project_root.
+ *
+ * It effectively returns the path to file_path, relative to the project root.
+ *
+ * Returns NULL when file_path is simply not relative to project_root or when
+ * project_root is nil.
+ */
+static const char *relative_to_project_root(trace_t *trace, const char *file_path) {
+    if (trace->project_root == Qnil) return NULL;
+    const char *project_root = StringValuePtr(trace->project_root);
+
+    const char *c1 = project_root;
+    const char *c2 = file_path;
+    while (*c1 && *c2) {
+        if (*c1 != *c2) return NULL;
+        c1++;
+        c2++;
+    }
+    if (*c2 == 0 || *c2 != '/') return NULL;
+
+    return c2 + 1;
+}
+
 static int is_in_project_root(trace_t *trace, rb_trace_arg_t *trace_arg) {
     if (trace->project_root == Qnil) return 1;
 
@@ -247,7 +272,7 @@ static VALUE get_binding(VALUE tracepoint) {
 static void write_local_variables(
     trace_t *trace,
     VALUE tracepoint,
-    const char *class_name, char method_sep, const char *method_name
+    const char *method_key
 ) {
     long i, len;
     const char *local_name, *local_type;
@@ -281,11 +306,53 @@ static void write_local_variables(
         snprintf(
             local_var_key,
             sizeof(local_var_key),
-            "%s%c%s%%%s",
-            class_name, method_sep, method_name, local_name
+            "%s%%%s",
+            method_key, local_name
         );
         filedict_insert_unique(&trace->locals, local_var_key, local_type);
     }
+}
+
+/*
+ * On a b_return event, we record the return type of the block, as well as the
+ * types of all its local variables and parameters.
+ */
+static void handle_b_return_event(VALUE tracepoint, trace_t *trace) {
+    rb_trace_arg_t *trace_arg;
+    VALUE file_name_val, return_value, return_klass;
+    const char *file_name, *relative_file_name, *return_type;
+    int line_number;
+    char method_key[FILEDICT_KEY_SIZE];
+
+    trace_arg = rb_tracearg_from_tracepoint(tracepoint);
+
+    file_name_val = rb_tracearg_path(trace_arg);
+    file_name     = StringValuePtr(file_name_val);
+
+    relative_file_name = relative_to_project_root(trace, file_name);
+    /* There is no value in analyzing blocks outside of the current project */
+    if (relative_file_name == NULL) return;
+
+    line_number  = FIX2INT(rb_tracearg_lineno(trace_arg));
+    return_value = rb_tracearg_return_value(trace_arg);
+    return_klass = rb_obj_class(return_value);
+    return_type  = get_class_name(return_klass);
+
+    /*
+     * We identify blocks by the line number of the block's end token.
+     * This is potentially ambiguous, as you could in theory have multiple
+     * blocks on the same line. Additionally, editing the code is likely to
+     * move blocks around. Not much we can do about these issues!
+     */
+    snprintf(
+        method_key,
+        sizeof(method_key),
+        "%s:%i",
+        relative_file_name, line_number
+    );
+
+    write_local_variables(trace, tracepoint, method_key);
+    filedict_insert_unique(&trace->returns, method_key, return_type);
 }
 
 static void handle_call_or_return_event(VALUE tracepoint, trace_t *trace) {
@@ -339,7 +406,7 @@ record_entry:
      * it for local files.
      */
     if (is_in_project_root(trace, trace_arg)) {
-        write_local_variables(trace, tracepoint, class_name, method_sep, method_name_cstr);
+        write_local_variables(trace, tracepoint, method_key);
     }
 
     /* For modules, we want data for both the module and the including class */
@@ -365,6 +432,7 @@ static void event_hook(VALUE tracepoint, void *data) {
     event     = rb_tracearg_event_flag(trace_arg);
 
     if (event == RUBY_EVENT_LINE) handle_line_event(tracepoint, (trace_t *)data);
+    else if (event == RUBY_EVENT_B_RETURN) handle_b_return_event(tracepoint, (trace_t *)data);
     else handle_call_or_return_event(tracepoint, (trace_t *)data);
 }
 
@@ -403,6 +471,7 @@ static VALUE trace_tracepoint(VALUE self) {
         trace->tracepoint = rb_tracepoint_new(
             Qnil,
             RUBY_EVENT_RETURN | RUBY_EVENT_C_RETURN |
+            RUBY_EVENT_B_RETURN |
             RUBY_EVENT_LINE,
             event_hook, (void*)trace
         );
