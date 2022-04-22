@@ -9,7 +9,7 @@ module Fasttrace
   def self.start(trace_dir = '.exposure', project_root: nil)
     raise Error, 'Already started' if $fasttrace
 
-    $fasttrace = Trace.new(trace_dir, project_root)
+    $fasttrace = Trace.new(trace_dir, project_root ? project_root.to_s : nil)
     $fasttrace.tracepoint.enable
   end
 

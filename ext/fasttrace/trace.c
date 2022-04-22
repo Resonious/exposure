@@ -380,11 +380,11 @@ static VALUE trace_initialize(VALUE self, VALUE trace_entries_dir, VALUE project
     const char *trace_entries_filename_cstr = StringValuePtr(trace_entries_dir);
 
     VALUE trace_returns_path = rb_str_new(trace_entries_filename_cstr, RSTRING_LEN(trace_entries_dir));
-    rb_str_append(trace_returns_path, rb_str_new_literal("fasttrace.returns"));
+    rb_str_append(trace_returns_path, rb_str_new_literal("/fasttrace.returns"));
     const char *trace_returns_path_cstr = StringValuePtr(trace_returns_path);
 
     VALUE trace_locals_path = rb_str_new(trace_entries_filename_cstr, RSTRING_LEN(trace_entries_dir));
-    rb_str_append(trace_locals_path, rb_str_new_literal("fasttrace.locals"));
+    rb_str_append(trace_locals_path, rb_str_new_literal("/fasttrace.locals"));
     const char *trace_locals_path_cstr = StringValuePtr(trace_locals_path);
 
     /* We expect these traces to be large */
