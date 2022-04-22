@@ -72,6 +72,7 @@ RSpec.describe Fasttrace do
       results << test_class.on_singleton
       results << test_class.on_anonymous_module
       results << test_class.block.call(self)
+      'test'.instance_exec(1, &test_class.block) # <- "String" should show up in fasttrace.blocks as receiver
     ensure
       tp.tracepoint.disable
     end

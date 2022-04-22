@@ -14,6 +14,7 @@ typedef struct trace_t {
 
     filedict_t returns;
     filedict_t locals;
+    filedict_t blocks;
 
     VALUE project_root;
 

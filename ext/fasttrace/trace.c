@@ -36,6 +36,7 @@ static void trace_free(void *data) {
 
     filedict_deinit(&trace->returns);
     filedict_deinit(&trace->locals);
+    filedict_deinit(&trace->blocks);
 
     xfree(trace);
 }
@@ -66,6 +67,7 @@ static VALUE trace_allocate(VALUE klass) {
 
     filedict_init(&trace->returns);
     filedict_init(&trace->locals);
+    filedict_init(&trace->blocks);
 
     trace->project_root = Qnil;
 
@@ -316,13 +318,14 @@ static void write_local_variables(
 /*
  * On a b_return event, we record the return type of the block, as well as the
  * types of all its local variables and parameters.
+ * Additionally, we record the receiver.
  */
 static void handle_b_return_event(VALUE tracepoint, trace_t *trace) {
     rb_trace_arg_t *trace_arg;
-    VALUE file_name_val, return_value, return_klass;
-    const char *file_name, *relative_file_name, *return_type;
+    VALUE file_name_val, return_value, return_klass, receiver, receiver_class;
+    const char *file_name, *relative_file_name, *return_type, *receiver_type;
     int line_number;
-    char method_key[FILEDICT_KEY_SIZE];
+    char block_key[FILEDICT_KEY_SIZE];
 
     trace_arg = rb_tracearg_from_tracepoint(tracepoint);
 
@@ -345,14 +348,20 @@ static void handle_b_return_event(VALUE tracepoint, trace_t *trace) {
      * move blocks around. Not much we can do about these issues!
      */
     snprintf(
-        method_key,
-        sizeof(method_key),
+        block_key,
+        sizeof(block_key),
         "%s:%i",
         relative_file_name, line_number
     );
 
-    write_local_variables(trace, tracepoint, method_key);
-    filedict_insert_unique(&trace->returns, method_key, return_type);
+    write_local_variables(trace, tracepoint, block_key);
+    filedict_insert_unique(&trace->returns, block_key, return_type);
+
+    receiver = rb_tracearg_self(trace_arg);
+    if (receiver == Qnil) return;
+    receiver_class = rb_obj_class(receiver);
+    receiver_type = get_class_name(receiver_class);
+    filedict_insert_unique(&trace->blocks, block_key, receiver_type);
 }
 
 static void handle_call_or_return_event(VALUE tracepoint, trace_t *trace) {
@@ -455,9 +464,14 @@ static VALUE trace_initialize(VALUE self, VALUE trace_entries_dir, VALUE project
     rb_str_append(trace_locals_path, rb_str_new_literal("/fasttrace.locals"));
     const char *trace_locals_path_cstr = StringValuePtr(trace_locals_path);
 
+    VALUE trace_blocks_path = rb_str_new(trace_entries_filename_cstr, RSTRING_LEN(trace_entries_dir));
+    rb_str_append(trace_blocks_path, rb_str_new_literal("/fasttrace.blocks"));
+    const char *trace_blocks_path_cstr = StringValuePtr(trace_blocks_path);
+
     /* We expect these traces to be large */
     filedict_open_f(&trace->returns, trace_returns_path_cstr, O_CREAT | O_RDWR, 4096 * 5);
     filedict_open_f(&trace->locals, trace_locals_path_cstr, O_CREAT | O_RDWR, 4096 * 5);
+    filedict_open_f(&trace->blocks, trace_blocks_path_cstr, O_CREAT | O_RDWR, 4096 * 5);
 
     trace->project_root = project_root;
 
