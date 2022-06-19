@@ -10,6 +10,7 @@ ID id_local_variable_get;
 VALUE cTrace;
 
 static size_t PAGE_SIZE;
+#define IDENTIFIER_MAX_SIZE (FILEDICT_BUCKET_ENTRY_BYTES * 2)
 
 
 /*
@@ -279,7 +280,7 @@ static void write_local_variables(
     long i, len;
     const char *local_name, *local_type;
     VALUE binding, local_variables, variable_name, variable, variable_klass;
-    char local_var_key[FILEDICT_KEY_SIZE];
+    char local_var_key[IDENTIFIER_MAX_SIZE];
 
     binding = rb_rescue(get_binding, tracepoint, NULL, Qnil);
     if (binding == Qnil) return;
@@ -325,7 +326,7 @@ static void handle_b_return_event(VALUE tracepoint, trace_t *trace) {
     VALUE file_name_val, return_value, return_klass, receiver, receiver_class;
     const char *file_name, *relative_file_name, *return_type, *receiver_type;
     int line_number;
-    char block_key[FILEDICT_KEY_SIZE];
+    char block_key[IDENTIFIER_MAX_SIZE];
 
     trace_arg = rb_tracearg_from_tracepoint(tracepoint);
 
@@ -374,7 +375,7 @@ static void handle_call_or_return_event(VALUE tracepoint, trace_t *trace) {
     const char *method_name_cstr;
     const char *return_type;
     char method_sep;
-    char method_key[FILEDICT_KEY_SIZE];
+    char method_key[IDENTIFIER_MAX_SIZE];
 
     trace_arg = rb_tracearg_from_tracepoint(tracepoint);
 

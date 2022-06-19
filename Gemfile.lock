@@ -1,7 +1,7 @@
 PATH
   remote: .
   specs:
-    fasttrace (0.4.0)
+    fasttrace (0.5.0)
 
 GEM
   remote: https://rubygems.org/
