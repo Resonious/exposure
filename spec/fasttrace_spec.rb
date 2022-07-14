@@ -44,7 +44,7 @@ RSpec.describe Fasttrace do
     File.delete 'tmp/fasttrace.returns' rescue nil
     File.delete 'tmp/fasttrace.locals' rescue nil
 
-    tp = Fasttrace::Trace.new('tmp', (File.absolute_path File.join __dir__, '..'))
+    tp = Fasttrace::Trace.new('tmp', (File.absolute_path File.join __dir__, '..'), true)
     expect(tp).to be_a Fasttrace::Trace
     expect(tp.tracepoint).to be_a TracePoint
 

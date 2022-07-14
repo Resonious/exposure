@@ -358,11 +358,13 @@ static void handle_b_return_event(VALUE tracepoint, trace_t *trace) {
     write_local_variables(trace, tracepoint, block_key);
     filedict_insert_unique(&trace->returns, block_key, return_type);
 
-    receiver = rb_tracearg_self(trace_arg);
-    if (receiver == Qnil) return;
-    receiver_class = rb_obj_class(receiver);
-    receiver_type = get_class_name(receiver_class);
-    filedict_insert_unique(&trace->blocks, block_key, receiver_type);
+    if (trace->track_block_receivers) {
+        receiver = rb_tracearg_self(trace_arg);
+        if (receiver == Qnil) return;
+        receiver_class = rb_obj_class(receiver);
+        receiver_type = get_class_name(receiver_class);
+        filedict_insert_unique(&trace->blocks, block_key, receiver_type);
+    }
 }
 
 static void handle_call_or_return_event(VALUE tracepoint, trace_t *trace) {
@@ -435,15 +437,16 @@ record_entry:
  * https://github.com/ruby-prof/ruby-prof/blob/master/ext/ruby_prof/rp_profile.c
  */
 static void event_hook(VALUE tracepoint, void *data) {
+    trace_t *trace = (trace_t *)data;
     rb_trace_arg_t *trace_arg;
     rb_event_flag_t event;
 
     trace_arg = rb_tracearg_from_tracepoint(tracepoint);
     event     = rb_tracearg_event_flag(trace_arg);
 
-    if (event == RUBY_EVENT_LINE) handle_line_event(tracepoint, (trace_t *)data);
-    else if (event == RUBY_EVENT_B_RETURN) handle_b_return_event(tracepoint, (trace_t *)data);
-    else handle_call_or_return_event(tracepoint, (trace_t *)data);
+    if (event == RUBY_EVENT_LINE) handle_line_event(tracepoint, trace);
+    else if (event == RUBY_EVENT_B_RETURN) handle_b_return_event(tracepoint, trace);
+    else handle_call_or_return_event(tracepoint, trace);
 }
 
 
@@ -453,7 +456,12 @@ static void event_hook(VALUE tracepoint, void *data) {
  * =====================
  */
 
-static VALUE trace_initialize(VALUE self, VALUE trace_entries_dir, VALUE project_root) {
+static VALUE trace_initialize(
+    VALUE self,
+    VALUE trace_entries_dir,
+    VALUE project_root,
+    VALUE track_block_receivers
+) {
     trace_t *trace = RTYPEDDATA_DATA(self);
     const char *trace_entries_filename_cstr = StringValuePtr(trace_entries_dir);
 
@@ -473,6 +481,8 @@ static VALUE trace_initialize(VALUE self, VALUE trace_entries_dir, VALUE project
     filedict_open_f(&trace->returns, trace_returns_path_cstr, O_CREAT | O_RDWR, 4096 * 5);
     filedict_open_f(&trace->locals, trace_locals_path_cstr, O_CREAT | O_RDWR, 4096 * 5);
     filedict_open_f(&trace->blocks, trace_blocks_path_cstr, O_CREAT | O_RDWR, 4096 * 5);
+
+    trace->track_block_receivers = (track_block_receivers != Qfalse && track_block_receivers != Qnil);
 
     trace->project_root = project_root;
 
@@ -508,7 +518,7 @@ void ft_init_trace(void) {
     cTrace = rb_define_class_under(mFasttrace, "Trace", rb_cObject);
     rb_define_alloc_func(cTrace, trace_allocate);
 
-    rb_define_method(cTrace, "initialize", trace_initialize, 2);
+    rb_define_method(cTrace, "initialize", trace_initialize, 3);
     rb_define_method(cTrace, "tracepoint", trace_tracepoint, 0);
 
     id_local_variables = rb_intern("local_variables");
