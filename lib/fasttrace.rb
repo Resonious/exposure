@@ -21,6 +21,10 @@ module Fasttrace
       raise ArgumentError, 'path_blocklist must be Array'
     end
 
+    FileUtils.touch(File.join(trace_dir, 'fasttrace.returns'))
+    FileUtils.touch(File.join(trace_dir, 'fasttrace.locals'))
+    FileUtils.touch(File.join(trace_dir, 'fasttrace.blocks'))
+
     $fasttrace = Trace.new(
       trace_dir,
       project_root ? project_root.to_s : nil,
