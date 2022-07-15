@@ -1,5 +1,7 @@
 # frozen_string_literal: true
 
+require_relative './support/block_me'
+
 module TestModule
   def on_module
     'module method'
@@ -44,7 +46,12 @@ RSpec.describe Fasttrace do
     File.delete 'tmp/fasttrace.returns' rescue nil
     File.delete 'tmp/fasttrace.locals' rescue nil
 
-    tp = Fasttrace::Trace.new('tmp', (File.absolute_path File.join __dir__, '..'), true)
+    tp = Fasttrace::Trace.new(
+      'tmp',
+      (File.absolute_path File.join __dir__, '..'),
+      ['support/block_me'],
+      true
+    )
     expect(tp).to be_a Fasttrace::Trace
     expect(tp.tracepoint).to be_a TracePoint
 
@@ -77,14 +84,14 @@ RSpec.describe Fasttrace do
       tp.tracepoint.disable
     end
 
-    expect(results).to match [
+    expect(results).to match_array [
       'class method',
       'instance method',
       'base class instance method',
       'module method',
       'singleton method',
       'anonymous module method',
-      'block(#<RSpec::ExampleGroups::Fasttrace "does something useful" (./spec/fasttrace_spec.rb:41)>) value'
+      'block(#<RSpec::ExampleGroups::Fasttrace "does something useful" (./spec/fasttrace_spec.rb:43)>) value'
     ]
   end
 end

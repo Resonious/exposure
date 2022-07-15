@@ -3,6 +3,7 @@
 #include <unistd.h>
 #include <errno.h>
 #include <sys/mman.h>
+#include <string.h>
 #include "../../filedict/filedict.h"
 
 ID id_local_variables;
@@ -124,7 +125,6 @@ static VALUE
 figure_singleton_name(VALUE klass)
 {
     VALUE attached, super;
-    VALUE attached_str;
     VALUE result = Qnil;
 
     /* We have come across a singleton object. First
@@ -248,6 +248,32 @@ static const char *relative_to_project_root(trace_t *trace, const char *file_pat
     return c2 + 1;
 }
 
+/*
+ * Check if the trace_arg's "path" attribute should be ignored for this trace.
+ */
+static int is_blocked(trace_t *trace, rb_trace_arg_t *trace_arg) {
+    VALUE current_file_name, blocked_path;
+    long i, len;
+    const char *file, *blocked;
+
+    if (trace->path_blocklist == Qnil) return 0;
+
+    current_file_name = rb_tracearg_path(trace_arg);
+    if (current_file_name == Qnil) return 1;
+
+    file = StringValuePtr(current_file_name);
+    len = RARRAY_LEN(trace->path_blocklist);
+
+    for (i = 0; i < len; ++i) {
+        blocked_path = RARRAY_AREF(trace->path_blocklist, i);
+        blocked = StringValuePtr(blocked_path);
+
+        if (strstr(file, blocked) != NULL) return 1;
+    }
+
+    return 0;
+}
+
 static int is_in_project_root(trace_t *trace, rb_trace_arg_t *trace_arg) {
     if (trace->project_root == Qnil) return 1;
 
@@ -369,7 +395,6 @@ static void handle_b_return_event(VALUE tracepoint, trace_t *trace) {
 
 static void handle_call_or_return_event(VALUE tracepoint, trace_t *trace) {
     rb_trace_arg_t *trace_arg;
-    rb_event_flag_t event;
 
     VALUE callee, klass, return_value, return_klass;
     int is_singleton = 0;
@@ -380,8 +405,6 @@ static void handle_call_or_return_event(VALUE tracepoint, trace_t *trace) {
     char method_key[IDENTIFIER_MAX_SIZE];
 
     trace_arg = rb_tracearg_from_tracepoint(tracepoint);
-
-    event = rb_tracearg_event_flag(trace_arg);
 
     callee         = rb_tracearg_callee_id(trace_arg);
     klass          = rb_tracearg_defined_class(trace_arg);
@@ -444,6 +467,8 @@ static void event_hook(VALUE tracepoint, void *data) {
     trace_arg = rb_tracearg_from_tracepoint(tracepoint);
     event     = rb_tracearg_event_flag(trace_arg);
 
+    if (is_blocked(trace, trace_arg)) return;
+
     if (event == RUBY_EVENT_LINE) handle_line_event(tracepoint, trace);
     else if (event == RUBY_EVENT_B_RETURN) handle_b_return_event(tracepoint, trace);
     else handle_call_or_return_event(tracepoint, trace);
@@ -460,6 +485,7 @@ static VALUE trace_initialize(
     VALUE self,
     VALUE trace_entries_dir,
     VALUE project_root,
+    VALUE path_blocklist,
     VALUE track_block_receivers
 ) {
     trace_t *trace = RTYPEDDATA_DATA(self);
@@ -483,7 +509,7 @@ static VALUE trace_initialize(
     filedict_open_f(&trace->blocks, trace_blocks_path_cstr, O_CREAT | O_RDWR, 4096 * 5);
 
     trace->track_block_receivers = (track_block_receivers != Qfalse && track_block_receivers != Qnil);
-
+    trace->path_blocklist = path_blocklist;
     trace->project_root = project_root;
 
     return self;
@@ -518,7 +544,7 @@ void ft_init_trace(void) {
     cTrace = rb_define_class_under(mFasttrace, "Trace", rb_cObject);
     rb_define_alloc_func(cTrace, trace_allocate);
 
-    rb_define_method(cTrace, "initialize", trace_initialize, 3);
+    rb_define_method(cTrace, "initialize", trace_initialize, 4);
     rb_define_method(cTrace, "tracepoint", trace_tracepoint, 0);
 
     id_local_variables = rb_intern("local_variables");

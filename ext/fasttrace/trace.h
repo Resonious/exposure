@@ -17,6 +17,7 @@ typedef struct trace_t {
     filedict_t blocks;
 
     VALUE project_root;
+    VALUE path_blocklist;
 
     VALUE current_file_name;
     int current_line_number;
