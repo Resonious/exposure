@@ -1,7 +1,7 @@
-#ifndef FASTTRACE_TRACE_H
-#define FASTTRACE_TRACE_H 1
+#ifndef EXPOSURE_TRACE_H
+#define EXPOSURE_TRACE_H 1
 
-#include "fasttrace.h"
+#include "exposure.h"
 #include "measure.h"
 #include <stdio.h>
 
@@ -26,4 +26,4 @@ typedef struct trace_t {
 
 void ft_init_trace(void);
 
-#endif /* FASTTRACE_TRACE_H */
+#endif /* EXPOSURE_TRACE_H */

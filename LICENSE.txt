@@ -1,4 +1,4 @@
-========================== Fasttrace ==========================
+========================== Exposure ==========================
 
 The MIT License (MIT)
 
@@ -24,7 +24,7 @@ THE SOFTWARE.
 
 
 ========================== ruby-prof ==========================
-Much of the code in fasttrace is taken from the ruby-prof project
+Much of the code in exposure is derived from the ruby-prof project
 https://github.com/ruby-prof/ruby-prof
 ===============================================================
 

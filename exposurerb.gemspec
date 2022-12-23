@@ -1,17 +1,18 @@
 # frozen_string_literal: true
 
-require_relative 'lib/fasttrace/version'
+require_relative 'lib/exposure/version'
 
 Gem::Specification.new do |spec|
-  spec.name          = 'fasttrace'
-  spec.version       = Fasttrace::VERSION
+  spec.name          = 'exposurerb'
+  spec.version       = Exposure::VERSION
   spec.authors       = ['Nigel Baillie']
   spec.email         = ['nigelbaillie@hey.com']
 
-  spec.summary       = 'Trace your Ruby programs - and fast!'
+  spec.summary       = 'Super lightweight dynamic type analysis for Ruby'
   spec.description   = <<~DESC
-    This library does nothing but spit out an execution trace when you tell it to.
-    Those traces can be used for runtime analysis and visualization.
+    Exposure hooks into a running Ruby problem, and records the types of all instance variables and
+    method return values. To see these values, a special Solargraph fork can be used to get type
+    info straight to your editor (https://github.com/Resonious/solargraph).
   DESC
   spec.homepage      = 'https://nigelbaillie.me'
   spec.license       = 'MIT'
@@ -20,7 +21,7 @@ Gem::Specification.new do |spec|
   # spec.metadata["allowed_push_host"] = "TODO: Set to 'https://mygemserver.com'"
 
   spec.metadata['homepage_uri'] = spec.homepage
-  spec.metadata['source_code_uri'] = 'https://github.com/Resonious/fasttrace'
+  spec.metadata['source_code_uri'] = 'https://github.com/Resonious/exposure'
   # spec.metadata["changelog_uri"] = "TODO: Put your gem's CHANGELOG.md URL here."
 
   # Specify which files should be added to the gem when it is released.
@@ -33,7 +34,7 @@ Gem::Specification.new do |spec|
   spec.bindir        = 'exe'
   spec.executables   = spec.files.grep(%r{\Aexe/}) { |f| File.basename(f) }
   spec.require_paths = ['lib']
-  spec.extensions    = ['ext/fasttrace/extconf.rb']
+  spec.extensions    = ['ext/exposure/extconf.rb']
 
   # Uncomment to register a new dependency of your gem
   # spec.add_dependency "example-gem", "~> 1.0"

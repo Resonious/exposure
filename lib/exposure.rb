@@ -1,9 +1,9 @@
 # frozen_string_literal: true
 
-require_relative 'fasttrace/version'
-require_relative 'fasttrace/fasttrace.so'
+require_relative 'exposure/version'
+require_relative 'exposure/exposure.so'
 
-module Fasttrace
+module Exposure
   class Error < StandardError; end
 
   # @param trace_dir [String] where to store trace files
@@ -16,27 +16,28 @@ module Fasttrace
     path_blocklist: nil,
     track_block_receivers: false
   )
-    raise Error, 'Already started' if $fasttrace
+    raise Error, 'Already started' if $_exposure
     if path_blocklist && !path_blocklist.is_a?(Array)
       raise ArgumentError, 'path_blocklist must be Array'
     end
 
     FileUtils.mkdir_p(trace_dir)
-    FileUtils.touch(File.join(trace_dir, 'fasttrace.returns'))
-    FileUtils.touch(File.join(trace_dir, 'fasttrace.locals'))
-    FileUtils.touch(File.join(trace_dir, 'fasttrace.blocks'))
+    FileUtils.touch(File.join(trace_dir, 'exposure.returns'))
+    FileUtils.touch(File.join(trace_dir, 'exposure.locals'))
+    FileUtils.touch(File.join(trace_dir, 'exposure.blocks'))
 
-    $fasttrace = Trace.new(
+    $_exposure = Trace.new(
       trace_dir,
       project_root ? project_root.to_s : nil,
       path_blocklist,
       track_block_receivers
     )
-    $fasttrace.tracepoint.enable
+    $_exposure.tracepoint.enable
   end
 
   def self.stop
-    $fasttrace.tracepoint.disable
-    $fasttrace = nil
+    return if $_exposure&.tracepoint.nil?
+    $_exposure.tracepoint.disable
+    $_exposure = nil
   end
 end

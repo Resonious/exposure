@@ -2,4 +2,4 @@
 
 require 'mkmf'
 
-create_makefile('fasttrace/fasttrace')
+create_makefile('exposure/exposure')

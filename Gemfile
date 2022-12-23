@@ -2,7 +2,7 @@
 
 source 'https://rubygems.org'
 
-# Specify your gem's dependencies in fasttrace.gemspec
+# Specify your gem's dependencies in exposurerb.gemspec
 gemspec
 
 gem 'rake', '~> 13.0'

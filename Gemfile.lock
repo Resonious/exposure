@@ -1,7 +1,7 @@
 PATH
   remote: .
   specs:
-    fasttrace (0.5.0)
+    exposurerb (0.8.0)
 
 GEM
   remote: https://rubygems.org/
@@ -53,7 +53,7 @@ PLATFORMS
   x86_64-linux
 
 DEPENDENCIES
-  fasttrace!
+  exposurerb!
   rake (~> 13.0)
   rake-compiler
   rspec (~> 3.0)

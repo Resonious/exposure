@@ -491,15 +491,15 @@ static VALUE trace_initialize(
     const char *trace_entries_filename_cstr = StringValuePtr(trace_entries_dir);
 
     VALUE trace_returns_path = rb_str_new(trace_entries_filename_cstr, RSTRING_LEN(trace_entries_dir));
-    rb_str_append(trace_returns_path, rb_str_new_literal("/fasttrace.returns"));
+    rb_str_append(trace_returns_path, rb_str_new_literal("/exposure.returns"));
     const char *trace_returns_path_cstr = StringValuePtr(trace_returns_path);
 
     VALUE trace_locals_path = rb_str_new(trace_entries_filename_cstr, RSTRING_LEN(trace_entries_dir));
-    rb_str_append(trace_locals_path, rb_str_new_literal("/fasttrace.locals"));
+    rb_str_append(trace_locals_path, rb_str_new_literal("/exposure.locals"));
     const char *trace_locals_path_cstr = StringValuePtr(trace_locals_path);
 
     VALUE trace_blocks_path = rb_str_new(trace_entries_filename_cstr, RSTRING_LEN(trace_entries_dir));
-    rb_str_append(trace_blocks_path, rb_str_new_literal("/fasttrace.blocks"));
+    rb_str_append(trace_blocks_path, rb_str_new_literal("/exposure.blocks"));
     const char *trace_blocks_path_cstr = StringValuePtr(trace_blocks_path);
 
     /* We expect these traces to be large */
@@ -540,7 +540,7 @@ static VALUE trace_tracepoint(VALUE self) {
 void ft_init_trace(void) {
     PAGE_SIZE = (size_t)getpagesize();
 
-    cTrace = rb_define_class_under(mFasttrace, "Trace", rb_cObject);
+    cTrace = rb_define_class_under(mExposure, "Trace", rb_cObject);
     rb_define_alloc_func(cTrace, trace_allocate);
 
     rb_define_method(cTrace, "initialize", trace_initialize, 4);

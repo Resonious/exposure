@@ -1,15 +1,13 @@
-# Fasttrace
+# Exposure
 
-This gem spits out an execution trace of your Ruby program. You'll get a huge file with every line number and method call, as well as timing information.
-
-The goal is to eventually use this for full-program visualization.
+This is a Ruby gem that analyzes a running Ruby program to extract type info. The type info is saved to a very fast (and disk space-hungry) on-file hashmap that can be read in real-time by a special Solargraph fork. The result: accurate type info in your editor!
 
 ## Installation
 
 Add this line to your application's Gemfile:
 
 ```ruby
-gem 'fasttrace'
+gem 'exposure'
 ```
 
 And then execute:
@@ -18,19 +16,17 @@ And then execute:
 
 Or install it yourself as:
 
-    $ gem install fasttrace
+    $ gem install exposure
 
 ## Usage
 
 ```ruby
-Fasttrace.start 'path/to/trace.out'
+Exposure.start
 my_ruby_code
-Fasttrace.stop
+Exposure.stop
 ```
 
-NOTE! Every time you run `Fasttrace.start`, the trace file will be truncated.
-
-Also, the trace files can get massive. Be careful!
+Type info for methods, local variables, and blocks will be saved in a folder called `.exposure`. These files get _very large_ very fast, as the data format is heavily optimized for quick read/write (and simplicity).
 
 ## Development
 
@@ -40,7 +36,7 @@ To install this gem onto your local machine, run `bundle exec rake install`. To 
 
 ## Contributing
 
-Bug reports and pull requests are welcome on GitHub at https://github.com/Resonious/fasttrace.
+Bug reports and pull requests are welcome on GitHub at https://github.com/Resonious/exposure.
 
 ## License
 

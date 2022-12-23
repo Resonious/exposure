@@ -35,24 +35,24 @@ class TestClass < TestBaseClass
   end
 end
 
-RSpec.describe Fasttrace do
+RSpec.describe Exposure do
   it 'has a version number' do
-    expect(Fasttrace::VERSION).not_to be nil
+    expect(Exposure::VERSION).not_to be nil
   end
 
   it 'does something useful' do
-    expect(Fasttrace::Trace).to be_a Class
+    expect(Exposure::Trace).to be_a Class
 
-    File.delete 'tmp/fasttrace.returns' rescue nil
-    File.delete 'tmp/fasttrace.locals' rescue nil
+    File.delete 'tmp/exposure.returns' rescue nil
+    File.delete 'tmp/exposure.locals' rescue nil
 
-    tp = Fasttrace::Trace.new(
+    tp = Exposure::Trace.new(
       'tmp',
       (File.absolute_path File.join __dir__, '..'),
       ['support/block_me'],
       true
     )
-    expect(tp).to be_a Fasttrace::Trace
+    expect(tp).to be_a Exposure::Trace
     expect(tp.tracepoint).to be_a TracePoint
 
     tp.tracepoint.enable
@@ -79,7 +79,7 @@ RSpec.describe Fasttrace do
       results << test_class.on_singleton
       results << test_class.on_anonymous_module
       results << test_class.block.call(self)
-      'test'.instance_exec(1, &test_class.block) # <- "String" should show up in fasttrace.blocks as receiver
+      'test'.instance_exec(1, &test_class.block) # <- "String" should show up in exposure.blocks as receiver
     ensure
       tp.tracepoint.disable
     end
@@ -91,7 +91,7 @@ RSpec.describe Fasttrace do
       'module method',
       'singleton method',
       'anonymous module method',
-      'block(#<RSpec::ExampleGroups::Fasttrace "does something useful" (./spec/fasttrace_spec.rb:43)>) value'
+      'block(#<RSpec::ExampleGroups::Exposure "does something useful" (./spec/exposure_spec.rb:43)>) value'
     ]
   end
 end
