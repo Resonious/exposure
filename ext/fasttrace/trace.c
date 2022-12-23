@@ -362,6 +362,7 @@ static void handle_b_return_event(VALUE tracepoint, trace_t *trace) {
     relative_file_name = relative_to_project_root(trace, file_name);
     /* There is no value in analyzing blocks outside of the current project */
     if (relative_file_name == NULL) return;
+    if (is_blocked(trace, trace_arg)) return;
 
     line_number  = FIX2INT(rb_tracearg_lineno(trace_arg));
     return_value = rb_tracearg_return_value(trace_arg);
@@ -440,7 +441,7 @@ record_entry:
      * Analyzing locals has a pretty large performance penalty, so we try to only do
      * it for local files.
      */
-    if (is_in_project_root(trace, trace_arg)) {
+    if (is_in_project_root(trace, trace_arg) && !is_blocked(trace, trace_arg)) {
         write_local_variables(trace, tracepoint, method_key);
     }
 
@@ -466,8 +467,6 @@ static void event_hook(VALUE tracepoint, void *data) {
 
     trace_arg = rb_tracearg_from_tracepoint(tracepoint);
     event     = rb_tracearg_event_flag(trace_arg);
-
-    if (is_blocked(trace, trace_arg)) return;
 
     if (event == RUBY_EVENT_LINE) handle_line_event(tracepoint, trace);
     else if (event == RUBY_EVENT_B_RETURN) handle_b_return_event(tracepoint, trace);
