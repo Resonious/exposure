@@ -254,27 +254,6 @@ static void handle_line_event(VALUE tracepoint, trace_t *trace) {
     trace->current_line_number = FIX2INT(rb_tracearg_lineno(trace_arg));
 }
 
-#define add_stringf(IN_STRINGS, OUT_START, OUT_LEN, FMT, ...) \
-do { \
-    char *buffer; \
-    size_t start; \
-    int len; \
-    while (1) { \
-        buffer = (IN_STRINGS)->data + ((IN_STRINGS)->i - (IN_STRINGS)->offset); \
-        len = snprintf(buffer, (IN_STRINGS)->len - (IN_STRINGS)->i, (FMT), __VA_ARGS__); \
-        if ((IN_STRINGS)->i + len >= (IN_STRINGS)->len) { \
-            (IN_STRINGS)->i = (IN_STRINGS)->len; \
-            trace_file_resize((IN_STRINGS), (IN_STRINGS)->len * 2); \
-            continue; \
-        } \
-        start = (IN_STRINGS)->i; \
-        (IN_STRINGS)->i += len; \
-        break; \
-    } \
-    OUT_START = start; \
-    OUT_LEN = len; \
-} while (0)
-
 static void handle_call_or_return_event(VALUE tracepoint, trace_t *trace) {
     rb_trace_arg_t *trace_arg;
     rb_event_flag_t event;
@@ -314,29 +293,29 @@ static void handle_call_or_return_event(VALUE tracepoint, trace_t *trace) {
 
     entry->type = ruby_event_to_entry_type(event);
 
-    add_stringf(
-        &trace->strings,
-        entry->method_name_start,
-        entry->method_name_len,
-        "%s%c%s\n", class_name, method_sep, method_name_cstr
-    );
+    //add_stringf(
+    //    &trace->strings,
+    //    entry->method_name_start,
+    //    entry->method_name_len,
+    //    "%s%c%s\n", class_name, method_sep, method_name_cstr
+    //);
     entry->method_name_len -= 1;
 
-    add_stringf(
-        &trace->strings,
-        entry->caller_file_start,
-        entry->caller_file_len,
-        "%s\n", trace->current_file_name
-    );
+    //add_stringf(
+    //    &trace->strings,
+    //    entry->caller_file_start,
+    //    entry->caller_file_len,
+    //    "%s\n", trace->current_file_name
+    //);
     entry->caller_line_number = trace->current_line_number;
     entry->caller_file_len -= 1;
 
-    add_stringf(
-        &trace->strings,
-        entry->callee_file_start,
-        entry->callee_file_len,
-        "%s\n", source_file_cstr
-    );
+    //add_stringf(
+    //    &trace->strings,
+    //    entry->callee_file_start,
+    //    entry->callee_file_len,
+    //    "%s\n", source_file_cstr
+    //);
     entry->callee_line_number = source_line;
     entry->callee_file_len -= 1;
     entry->timestamp = measure_wall_time();
@@ -347,13 +326,6 @@ static void handle_call_or_return_event(VALUE tracepoint, trace_t *trace) {
     if (trace->entries.i >= trace->entries.len) {
         trace_file_resize(&trace->entries, trace->entries.len * 2);
     }
-
-    return;
-    fprintf(
-        trace->entries.file, "%2lu:%2f\t%-8s\t%s%c%s\t%s:%2d\n",
-        FIX2ULONG(fiber), measure_wall_time(),
-        event_name, class_name, method_sep, method_name_cstr, source_file_cstr, source_line
-    );
 }
 
 /*
