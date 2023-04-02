@@ -12,4 +12,10 @@ RSpec.configure do |config|
   config.expect_with :rspec do |c|
     c.syntax = :expect
   end
+
+  config.before :suite do
+    # Wait for user to input something before starting the tests
+    puts 'Press enter to start tests'
+    $stdin.gets
+  end
 end

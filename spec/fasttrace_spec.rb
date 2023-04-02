@@ -32,11 +32,11 @@ RSpec.describe Fasttrace do
   it 'does something useful' do
     expect(Fasttrace::Trace).to be_a Class
 
-    tp = Fasttrace::Trace.new('tmp/test.out')
+    tp = Fasttrace::Trace.new
     expect(tp).to be_a Fasttrace::Trace
     expect(tp.tracepoint).to be_a TracePoint
 
-    tp.tracepoint.enable
+    tp.start
     begin
       results = []
       test_class = TestClass.new
@@ -51,7 +51,7 @@ RSpec.describe Fasttrace do
       results << test_class.on_module
       results << test_class.on_singleton
     ensure
-      tp.tracepoint.disable
+      tp.stop
     end
 
     expect(results).to eq [
