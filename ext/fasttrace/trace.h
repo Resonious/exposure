@@ -6,15 +6,14 @@
 #include <stdio.h>
 #include "../../tracy/public/tracy/TracyC.h"
 
-#define TRACY_STACK_SIZE 1024
-
 typedef struct trace_t {
     VALUE tracepoint;
 
-    st_table *strings_table;
+    st_table *fibers_table;
 
-    size_t stack_depth;
-    TracyCZoneCtx tracy_ctx_stack[TRACY_STACK_SIZE];
+    // TODO: track these per fiber
+    size_t stack_depth, stack_cap;
+    TracyCZoneCtx *tracy_ctx_stack;
 
     VALUE current_file_name;
     int current_line_number;

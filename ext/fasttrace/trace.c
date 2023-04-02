@@ -49,6 +49,8 @@ static void trace_free(void *data) {
     }
 #endif
 
+    xfree(trace->tracy_ctx_stack);
+
     xfree(trace);
 }
 
@@ -171,12 +173,11 @@ static void handle_call_event(VALUE tracepoint, trace_t *trace) {
     unsigned int class_flags;
     const char *class_name;
     const char *method_name_cstr;
-    const char *source_file_cstr;
     char method_sep;
 
-    if (trace->stack_depth >= TRACY_STACK_SIZE) {
-        rb_warn("Stack too big to trace!!");
-        return;
+    if (trace->stack_depth >= trace->stack_cap) {
+        trace->stack_cap *= 2;
+        trace->tracy_ctx_stack = xrealloc(trace->tracy_ctx_stack, trace->stack_cap * sizeof(TracyCZoneCtx));
     }
 
     fiber = rb_fiber_current();
@@ -198,7 +199,7 @@ static void handle_call_event(VALUE tracepoint, trace_t *trace) {
 #ifdef TRACY_ENABLE
     VALUE qualified_method = rb_sprintf("%s%c%s", class_name, method_sep, method_name_cstr);
 
-    const void *srcloc = (void *)___tracy_alloc_srcloc(
+    const uint64_t srcloc = ___tracy_alloc_srcloc(
         source_line,
         RSTRING_PTR(source_file), RSTRING_LEN(source_file),
         RSTRING_PTR(qualified_method), RSTRING_LEN(qualified_method)
@@ -270,6 +271,8 @@ static VALUE trace_initialize(VALUE self) {
     trace->strings_table = st_init_strtable_with_size(4096);
 
     trace->stack_depth = 0;
+    trace->stack_cap = 1024;
+    trace->tracy_ctx_stack = xmalloc(trace->stack_cap * sizeof(TracyCZoneCtx));
 
     return self;
 }
@@ -291,6 +294,13 @@ static VALUE trace_tracepoint(VALUE self) {
 }
 
 static VALUE trace_start(VALUE self) {
+#ifdef TRACY_FIBERS
+    VALUE fiber = rb_fiber_current();
+    VALUE fiber_name = rb_funcall(fiber, rb_intern("inspect"), 0);
+    const char *fiber_name_cstr = RSTRING_PTR(fiber_name);
+    ___tracy_fiber_enter(fiber_name_cstr);
+#endif
+
     VALUE tracepoint = trace_tracepoint(self);
     rb_tracepoint_enable(tracepoint);
     return Qnil;

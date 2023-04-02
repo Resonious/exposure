@@ -22,6 +22,11 @@ class TestClass < TestBaseClass
   def on_instance
     'instance method'
   end
+
+  def recursive(n = 0)
+    return n if n > 100
+    recursive(n + 1)
+  end
 end
 
 RSpec.describe Fasttrace do
@@ -50,6 +55,7 @@ RSpec.describe Fasttrace do
       results << test_class.on_base
       results << test_class.on_module
       results << test_class.on_singleton
+      results << test_class.recursive
     ensure
       tp.stop
     end
@@ -59,7 +65,8 @@ RSpec.describe Fasttrace do
       'instance method',
       'base class instance method',
       'module method',
-      'singleton method'
+      'singleton method',
+      101
     ]
   end
 end
