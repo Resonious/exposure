@@ -276,7 +276,6 @@ static void handle_call_event(VALUE tracepoint, trace_t *trace) {
         ___tracy_emit_zone_color(ctx, 0xb26258);
     }
 
-    // TODO could color code the trace based on whether it is in a gem or not
     stack->ctx_stack[stack->depth++] = ctx;
 #endif
 }
