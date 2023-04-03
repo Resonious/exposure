@@ -25,6 +25,7 @@ class TestClass < TestBaseClass
 
   def recursive(raise_at = 101, n = 0)
     return n if n > 100
+    raise 'oohh' if n == raise_at
     recursive(raise_at, n + 1)
   end
 end
@@ -59,8 +60,8 @@ RSpec.describe Fasttrace do
 
       begin
         results << test_class.recursive(50)
-      rescue => e
-        results << 'rescued'
+      rescue RuntimeError => e
+        results << e.message
       end
     ensure
       tp.stop
@@ -73,7 +74,7 @@ RSpec.describe Fasttrace do
       'module method',
       'singleton method',
       101,
-      'rescued'
+      'oohh'
     ]
   end
 end
