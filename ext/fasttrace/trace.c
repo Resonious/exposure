@@ -4,6 +4,7 @@
 #include <errno.h>
 #include <sys/mman.h>
 
+static VALUE sname;
 VALUE cTrace;
 const unsigned int kSingleton = kClassSingleton | kModuleSingleton |
                                 kObjectSingleton | kOtherSingleton;
@@ -44,7 +45,6 @@ static int free_traced_fiber(st_data_t key, st_data_t value, st_data_t _args) {
         pop_stack(stack);
     }
 
-    xfree(stack->name);
     xfree(stack);
     return ST_CONTINUE;
 }
@@ -54,6 +54,7 @@ static void trace_mark(void *data) {
     rb_gc_mark(trace->tracepoint);
     rb_gc_mark(trace->current_file_name);
     rb_gc_mark(trace->last_fiber);
+    rb_gc_mark(trace->project_root);
     st_foreach(trace->fibers_table, mark_traced_fiber, 0);
 }
 
@@ -93,6 +94,7 @@ static VALUE trace_allocate(VALUE klass) {
     result = TypedData_Make_Struct(klass, trace_t, &trace_type, trace);
     trace->tracepoint = Qnil;
     trace->last_fiber = Qnil;
+    trace->project_root = Qnil;
 
     trace->fibers_table = NULL;
 
@@ -106,7 +108,25 @@ static VALUE trace_allocate(VALUE klass) {
  * =============
  */
 
-/*
+static int is_in_project_root(trace_t *trace, rb_trace_arg_t *trace_arg) {
+    if (trace->project_root == Qnil) return 1;
+
+    VALUE current_file_name_rstr = rb_tracearg_path(trace_arg);
+    if (current_file_name_rstr == Qnil) return 1;
+
+    const char *current_file_name = StringValuePtr(current_file_name_rstr);
+    const char *project_root = StringValuePtr(trace->project_root);
+
+    const char *c1 = project_root;
+    const char *c2 = current_file_name;
+    while (*c1 && *c2) {
+        if (*c1 != *c2) return 0;
+        c1++;
+        c2++;
+    }
+    return 1;
+}
+
 static const char* get_event_name(rb_event_flag_t event) {
     switch (event) {
     case RUBY_EVENT_LINE:
@@ -141,7 +161,6 @@ static const char* get_event_name(rb_event_flag_t event) {
         return "unknown";
     }
 }
-*/
 
 static const char *get_class_name(VALUE klass, unsigned int* flags) {
     VALUE attached;
@@ -200,7 +219,10 @@ static void handle_call_event(VALUE tracepoint, trace_t *trace) {
     unsigned int class_flags;
     const char *class_name;
     const char *method_name_cstr;
+    const char *current_file_name_cstr;
     char method_sep;
+    rb_event_flag_t event;
+    const char *event_name;
 
     fiber = rb_fiber_current();
     stack = stack_for_fiber(trace, fiber);
@@ -209,19 +231,33 @@ static void handle_call_event(VALUE tracepoint, trace_t *trace) {
 
     trace_arg = rb_tracearg_from_tracepoint(tracepoint);
 
-    source_file    = trace->current_file_name;
-    source_line    = trace->current_line_number;
+    source_file    = rb_tracearg_path(trace_arg);
+    source_line    = FIX2INT(rb_tracearg_lineno(trace_arg));
     callee         = rb_tracearg_callee_id(trace_arg);
     klass          = rb_tracearg_defined_class(trace_arg);
     class_name     = get_class_name(klass, &class_flags);
+    event          = rb_tracearg_event_flag(trace_arg);
+    event_name     = get_event_name(event);
 
     method_name_cstr = (callee != Qnil ? rb_id2name(SYM2ID(callee)) : "<none>");
     if (source_file == Qnil) source_file = rb_str_new_cstr("<none>");
+
+    if (trace->current_file_name == Qnil) {
+        current_file_name_cstr = "<unknown>";
+    } else {
+        current_file_name_cstr = StringValueCStr(trace->current_file_name);
+    }
 
     if (class_flags & kSingleton) method_sep = '.';
     else                          method_sep = '#';
 
     VALUE qualified_method = rb_sprintf("%s%c%s", class_name, method_sep, method_name_cstr);
+
+    VALUE extra_info = rb_sprintf(
+        "Event type: %s\nCalled from: %s:%d",
+        event_name,
+        current_file_name_cstr, trace->current_line_number
+    );
 
 #ifdef TRACY_ENABLE
     const uint64_t srcloc = ___tracy_alloc_srcloc(
@@ -232,7 +268,14 @@ static void handle_call_event(VALUE tracepoint, trace_t *trace) {
 
     TracyCZoneCtx ctx = ___tracy_emit_zone_begin_alloc(srcloc, 1);
     ___tracy_emit_zone_name(ctx, RSTRING_PTR(qualified_method), RSTRING_LEN(qualified_method));
-    ___tracy_emit_zone_text(ctx, RSTRING_PTR(source_file), RSTRING_LEN(source_file));
+    ___tracy_emit_zone_text(ctx, RSTRING_PTR(extra_info), RSTRING_LEN(extra_info));
+
+    if (is_in_project_root(trace, trace_arg)) {
+        ___tracy_emit_zone_color(ctx, 0x2f4b8c);
+    } else {
+        ___tracy_emit_zone_color(ctx, 0xb26258);
+    }
+
     // TODO could color code the trace based on whether it is in a gem or not
     stack->ctx_stack[stack->depth++] = ctx;
 #endif
@@ -283,12 +326,11 @@ static void stack_init(tracy_stack_t *stack, VALUE fiber) {
     stack->cap = 1024;
     stack->ctx_stack = xmalloc(stack->cap * sizeof(TracyCZoneCtx));
 
-    VALUE fiber_name = rb_sprintf("Ruby Fiber %i", FIX2INT(rb_obj_id(fiber)));
-    unsigned long long fiber_name_len = RSTRING_LEN(fiber_name);
+    VALUE thread = rb_thread_current();
+    VALUE thread_name = rb_funcall(thread, sname, 0);
+    const char *thread_name_cstr = thread_name != Qnil ? StringValueCStr(thread_name) : "Fiber";
 
-    stack->name = xmalloc(fiber_name_len + 1);
-    memcpy(stack->name, RSTRING_PTR(fiber_name), fiber_name_len);
-    stack->name[fiber_name_len] = '\0';
+    sprintf(stack->name, "Ruby %s %i", thread_name_cstr, FIX2INT(rb_obj_id(fiber)));
 }
 
 // Boilerplate for st_table
@@ -333,13 +375,14 @@ static tracy_stack_t *stack_for_fiber(trace_t *trace, VALUE fiber) {
  * =====================
  */
 
-static VALUE trace_initialize(VALUE self) {
+static VALUE trace_initialize(VALUE self, VALUE project_root) {
     trace_t *trace = RTYPEDDATA_DATA(self);
 
     trace->current_file_name = rb_str_new_cstr("<none>");
     trace->current_line_number = -1;
 
     trace->fibers_table = NULL;
+    trace->project_root = project_root;
 
     return self;
 }
@@ -389,10 +432,12 @@ void ft_init_trace(void) {
     fibers_table_type.compare = rb_value_compare;
     fibers_table_type.hash = rb_value_hash;
 
+    sname = rb_intern("name");
+
     cTrace = rb_define_class_under(mFasttrace, "Trace", rb_cObject);
     rb_define_alloc_func(cTrace, trace_allocate);
 
-    rb_define_method(cTrace, "initialize", trace_initialize, 0);
+    rb_define_method(cTrace, "initialize", trace_initialize, 1);
     rb_define_method(cTrace, "tracepoint", trace_tracepoint, 0);
     rb_define_method(cTrace, "start", trace_start, 0);
     rb_define_method(cTrace, "stop", trace_stop, 0);

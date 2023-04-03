@@ -38,11 +38,12 @@ RSpec.describe Fasttrace do
   it 'does something useful' do
     expect(Fasttrace::Trace).to be_a Class
 
-    tp = Fasttrace::Trace.new
+    tp = Fasttrace::Trace.new(File.expand_path('..', __dir__))
+    tp.start
+
     expect(tp).to be_a Fasttrace::Trace
     expect(tp.tracepoint).to be_a TracePoint
 
-    tp.start
     begin
       results = []
       test_class = TestClass.new

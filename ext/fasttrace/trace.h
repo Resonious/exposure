@@ -9,7 +9,7 @@
 typedef struct tracy_stack_t {
     size_t depth, cap;
     TracyCZoneCtx *ctx_stack;
-    char *name;
+    char name[256];
 } tracy_stack_t;
 
 typedef struct trace_t {
@@ -20,6 +20,8 @@ typedef struct trace_t {
 
     // Used to know when we've switched fibers
     VALUE last_fiber;
+
+    VALUE project_root;
 
     VALUE current_file_name;
     int current_line_number;
