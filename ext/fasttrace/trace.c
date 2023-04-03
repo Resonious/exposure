@@ -8,13 +8,14 @@ VALUE cTrace;
 const unsigned int kSingleton = kClassSingleton | kModuleSingleton |
                                 kObjectSingleton | kOtherSingleton;
 
-static void handle_return_event(VALUE _tracepoint, trace_t *trace) {
-    if (trace->stack_depth == 0) return;
+static tracy_stack_t *stack_for_fiber(trace_t *trace, VALUE fiber);
 
+static void pop_stack(tracy_stack_t *stack) {
+    if (stack->depth == 0) return;
 #ifdef TRACY_ENABLE
-    TracyCZoneCtx ctx = trace->tracy_ctx_stack[trace->stack_depth - 1];
+    TracyCZoneCtx ctx = stack->ctx_stack[stack->depth - 1];
     ___tracy_emit_zone_end(ctx);
-    trace->stack_depth -= 1;
+    stack->depth -= 1;
 #endif
 }
 
@@ -30,26 +31,40 @@ static void handle_return_event(VALUE _tracepoint, trace_t *trace) {
  * references to Ruby objects in C code.
  */
 
+static int mark_traced_fiber(st_data_t key, st_data_t _value, st_data_t _args) {
+    VALUE fiber = (VALUE)key;
+    rb_gc_mark(fiber);
+    return ST_CONTINUE;
+}
+
+static int free_traced_fiber(st_data_t key, st_data_t value, st_data_t _args) {
+    tracy_stack_t *stack = (tracy_stack_t *)value;
+
+    while (stack->depth > 0) {
+        pop_stack(stack);
+    }
+
+    xfree(stack->name);
+    xfree(stack);
+    return ST_CONTINUE;
+}
+
 static void trace_mark(void *data) {
     trace_t *trace = (trace_t*)data;
     rb_gc_mark(trace->tracepoint);
     rb_gc_mark(trace->current_file_name);
+    rb_gc_mark(trace->last_fiber);
+    st_foreach(trace->fibers_table, mark_traced_fiber, 0);
 }
 
 static void trace_free(void *data) {
     trace_t *trace = (trace_t*)data;
 
-    if (trace->strings_table) {
-        st_free_table(trace->strings_table);
+    if (trace->fibers_table) {
+        // free all of the tracy_stack_t inside of trace->fibers_table st_table.
+        st_foreach(trace->fibers_table, free_traced_fiber, 0);
+        st_free_table(trace->fibers_table);
     }
-
-#ifdef TRACY_ENABLE
-    while (trace->stack_depth > 0) {
-        handle_return_event(Qnil, trace);
-    }
-#endif
-
-    xfree(trace->tracy_ctx_stack);
 
     xfree(trace);
 }
@@ -77,9 +92,9 @@ static VALUE trace_allocate(VALUE klass) {
 
     result = TypedData_Make_Struct(klass, trace_t, &trace_type, trace);
     trace->tracepoint = Qnil;
+    trace->last_fiber = Qnil;
 
-    trace->strings_table = NULL;
-    trace->stack_depth = 0;
+    trace->fibers_table = NULL;
 
     return result;
 }
@@ -154,6 +169,17 @@ static const char *get_class_name(VALUE klass, unsigned int* flags) {
     return rb_class2name(klass);
 }
 
+static void sync_tracy_fiber(trace_t *trace, tracy_stack_t *stack) {
+    VALUE fiber = rb_fiber_current();
+
+#ifdef TRACY_FIBERS
+    if (!rb_eql(fiber, trace->last_fiber)) {
+        ___tracy_fiber_enter(stack->name);
+        trace->last_fiber = fiber;
+    }
+#endif
+}
+
 static void handle_line_event(VALUE tracepoint, trace_t *trace) {
     rb_trace_arg_t *trace_arg;
 
@@ -166,6 +192,7 @@ static void handle_line_event(VALUE tracepoint, trace_t *trace) {
 static void handle_call_event(VALUE tracepoint, trace_t *trace) {
     rb_trace_arg_t *trace_arg;
     VALUE fiber;
+    tracy_stack_t *stack;
 
     VALUE source_file;
     int source_line;
@@ -175,12 +202,10 @@ static void handle_call_event(VALUE tracepoint, trace_t *trace) {
     const char *method_name_cstr;
     char method_sep;
 
-    if (trace->stack_depth >= trace->stack_cap) {
-        trace->stack_cap *= 2;
-        trace->tracy_ctx_stack = xrealloc(trace->tracy_ctx_stack, trace->stack_cap * sizeof(TracyCZoneCtx));
-    }
-
     fiber = rb_fiber_current();
+    stack = stack_for_fiber(trace, fiber);
+
+    sync_tracy_fiber(trace, stack);
 
     trace_arg = rb_tracearg_from_tracepoint(tracepoint);
 
@@ -196,9 +221,9 @@ static void handle_call_event(VALUE tracepoint, trace_t *trace) {
     if (class_flags & kSingleton) method_sep = '.';
     else                          method_sep = '#';
 
-#ifdef TRACY_ENABLE
     VALUE qualified_method = rb_sprintf("%s%c%s", class_name, method_sep, method_name_cstr);
 
+#ifdef TRACY_ENABLE
     const uint64_t srcloc = ___tracy_alloc_srcloc(
         source_line,
         RSTRING_PTR(source_file), RSTRING_LEN(source_file),
@@ -209,22 +234,20 @@ static void handle_call_event(VALUE tracepoint, trace_t *trace) {
     ___tracy_emit_zone_name(ctx, RSTRING_PTR(qualified_method), RSTRING_LEN(qualified_method));
     ___tracy_emit_zone_text(ctx, RSTRING_PTR(source_file), RSTRING_LEN(source_file));
     // TODO could color code the trace based on whether it is in a gem or not
-    trace->tracy_ctx_stack[trace->stack_depth++] = ctx;
+    stack->ctx_stack[stack->depth++] = ctx;
 #endif
+}
 
-    //add_stringf(
-    //    &trace->strings,
-    //    entry->caller_file_start,
-    //    entry->caller_file_len,
-    //    "%s\n", trace->current_file_name
-    //);
+static void handle_return_event(VALUE _tracepoint, trace_t *trace) {
+    VALUE fiber;
+    tracy_stack_t *stack;
 
-    //add_stringf(
-    //    &trace->strings,
-    //    entry->callee_file_start,
-    //    entry->callee_file_len,
-    //    "%s\n", source_file_cstr
-    //);
+    fiber = rb_fiber_current();
+    stack = stack_for_fiber(trace, fiber);
+
+    sync_tracy_fiber(trace, stack);
+
+    pop_stack(stack);
 }
 
 /*
@@ -255,6 +278,54 @@ static void event_hook(VALUE tracepoint, void *data) {
     }
 }
 
+static void stack_init(tracy_stack_t *stack, VALUE fiber) {
+    stack->depth = 0;
+    stack->cap = 1024;
+    stack->ctx_stack = xmalloc(stack->cap * sizeof(TracyCZoneCtx));
+
+    VALUE fiber_name = rb_sprintf("Ruby Fiber %i", FIX2INT(rb_obj_id(fiber)));
+    unsigned long long fiber_name_len = RSTRING_LEN(fiber_name);
+
+    stack->name = xmalloc(fiber_name_len + 1);
+    memcpy(stack->name, RSTRING_PTR(fiber_name), fiber_name_len);
+    stack->name[fiber_name_len] = '\0';
+}
+
+// Boilerplate for st_table
+static int rb_value_compare(st_data_t a, st_data_t b) {
+    VALUE va = (VALUE)a;
+    VALUE vb = (VALUE)b;
+
+    return rb_eql(va, vb);
+}
+
+// Boilerplate for st_table
+static st_index_t rb_value_hash(st_data_t a) {
+    VALUE va = (VALUE)a;
+    return rb_hash(va);
+}
+
+static struct st_hash_type fibers_table_type;
+
+static tracy_stack_t *stack_for_fiber(trace_t *trace, VALUE fiber) {
+    tracy_stack_t *stack;
+    st_data_t data;
+
+    if (!trace->fibers_table) {
+        trace->fibers_table = st_init_table_with_size(&fibers_table_type, 16);
+    }
+
+    if (st_lookup(trace->fibers_table, fiber, &data)) {
+        stack = (tracy_stack_t *)data;
+    } else {
+        stack = xmalloc(sizeof(tracy_stack_t));
+        stack_init(stack, fiber);
+        st_insert(trace->fibers_table, (st_data_t)fiber, (st_data_t)stack);
+    }
+
+    return stack;
+}
+
 
 /*
  * =====================
@@ -268,11 +339,7 @@ static VALUE trace_initialize(VALUE self) {
     trace->current_file_name = rb_str_new_cstr("<none>");
     trace->current_line_number = -1;
 
-    trace->strings_table = st_init_strtable_with_size(4096);
-
-    trace->stack_depth = 0;
-    trace->stack_cap = 1024;
-    trace->tracy_ctx_stack = xmalloc(trace->stack_cap * sizeof(TracyCZoneCtx));
+    trace->fibers_table = NULL;
 
     return self;
 }
@@ -294,29 +361,21 @@ static VALUE trace_tracepoint(VALUE self) {
 }
 
 static VALUE trace_start(VALUE self) {
-#ifdef TRACY_FIBERS
-    VALUE fiber = rb_fiber_current();
-    VALUE fiber_name = rb_funcall(fiber, rb_intern("inspect"), 0);
-    const char *fiber_name_cstr = RSTRING_PTR(fiber_name);
-    ___tracy_fiber_enter(fiber_name_cstr);
-#endif
-
     VALUE tracepoint = trace_tracepoint(self);
     rb_tracepoint_enable(tracepoint);
+
     return Qnil;
 }
 
 static VALUE trace_stop(VALUE self) {
     VALUE tracepoint = trace_tracepoint(self);
     VALUE disabled = rb_tracepoint_disable(tracepoint);
-#ifdef TRACY_ENABLE
     trace_t *trace = RTYPEDDATA_DATA(self);
-    if (disabled == Qtrue) {
-        while (trace->stack_depth > 0) {
-            handle_return_event(Qnil, trace);
-        }
+    if (disabled == Qtrue && trace->fibers_table) {
+        st_foreach(trace->fibers_table, free_traced_fiber, 0);
+        st_free_table(trace->fibers_table);
+        trace->fibers_table = NULL;
     }
-#endif
     return Qnil;
 }
 
@@ -327,6 +386,9 @@ static VALUE trace_stop(VALUE self) {
  */
 
 void ft_init_trace(void) {
+    fibers_table_type.compare = rb_value_compare;
+    fibers_table_type.hash = rb_value_hash;
+
     cTrace = rb_define_class_under(mFasttrace, "Trace", rb_cObject);
     rb_define_alloc_func(cTrace, trace_allocate);
 

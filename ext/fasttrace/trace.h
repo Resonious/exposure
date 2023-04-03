@@ -6,14 +6,20 @@
 #include <stdio.h>
 #include "../../tracy/public/tracy/TracyC.h"
 
+typedef struct tracy_stack_t {
+    size_t depth, cap;
+    TracyCZoneCtx *ctx_stack;
+    char *name;
+} tracy_stack_t;
+
 typedef struct trace_t {
     VALUE tracepoint;
 
+    // Table of Fiber VALUE -> tracy_stack_t
     st_table *fibers_table;
 
-    // TODO: track these per fiber
-    size_t stack_depth, stack_cap;
-    TracyCZoneCtx *tracy_ctx_stack;
+    // Used to know when we've switched fibers
+    VALUE last_fiber;
 
     VALUE current_file_name;
     int current_line_number;
