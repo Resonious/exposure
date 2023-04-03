@@ -16,4 +16,8 @@ module Fasttrace
     $fasttrace.stop
     $fasttrace = nil
   end
+
+  def self.frame(name, &block)
+    $fasttrace.frame(name, &block)
+  end
 end

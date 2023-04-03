@@ -55,6 +55,7 @@ static void trace_mark(void *data) {
     rb_gc_mark(trace->current_file_name);
     rb_gc_mark(trace->last_fiber);
     rb_gc_mark(trace->project_root);
+    rb_gc_mark(trace->current_method_name);
     st_foreach(trace->fibers_table, mark_traced_fiber, 0);
 }
 
@@ -95,6 +96,7 @@ static VALUE trace_allocate(VALUE klass) {
     trace->tracepoint = Qnil;
     trace->last_fiber = Qnil;
     trace->project_root = Qnil;
+    trace->current_method_name = Qnil;
 
     trace->fibers_table = NULL;
 
@@ -108,10 +110,10 @@ static VALUE trace_allocate(VALUE klass) {
  * =============
  */
 
-static int is_in_project_root(trace_t *trace, rb_trace_arg_t *trace_arg) {
+static int is_in_project_root(trace_t *trace) {
     if (trace->project_root == Qnil) return 1;
 
-    VALUE current_file_name_rstr = rb_tracearg_path(trace_arg);
+    VALUE current_file_name_rstr = trace->current_file_name;
     if (current_file_name_rstr == Qnil) return 1;
 
     const char *current_file_name = StringValuePtr(current_file_name_rstr);
@@ -259,6 +261,8 @@ static void handle_call_event(VALUE tracepoint, trace_t *trace) {
         current_file_name_cstr, trace->current_line_number
     );
 
+    trace->current_method_name = qualified_method;
+
 #ifdef TRACY_ENABLE
     const uint64_t srcloc = ___tracy_alloc_srcloc(
         source_line,
@@ -270,7 +274,7 @@ static void handle_call_event(VALUE tracepoint, trace_t *trace) {
     ___tracy_emit_zone_name(ctx, RSTRING_PTR(qualified_method), RSTRING_LEN(qualified_method));
     ___tracy_emit_zone_text(ctx, RSTRING_PTR(extra_info), RSTRING_LEN(extra_info));
 
-    if (is_in_project_root(trace, trace_arg)) {
+    if (is_in_project_root(trace)) {
         ___tracy_emit_zone_color(ctx, 0x2f4b8c);
     } else {
         ___tracy_emit_zone_color(ctx, 0xb26258);
@@ -421,6 +425,33 @@ static VALUE trace_stop(VALUE self) {
     return Qnil;
 }
 
+static VALUE trace_frame(VALUE self, VALUE frame_name) {
+    if (!rb_block_given_p()) {
+        rb_raise(rb_eArgError, "A block is required");
+    }
+
+    trace_t *trace = RTYPEDDATA_DATA(self);
+    VALUE fiber = rb_fiber_current();
+    tracy_stack_t *stack = stack_for_fiber(trace, fiber);
+
+    sync_tracy_fiber(trace, stack);
+
+    if (frame_name == Qnil) frame_name = trace->current_method_name;
+    const char *frame_name_cstr = StringValueCStr(frame_name);
+
+#ifdef TRACY_ENABLE
+    ___tracy_emit_frame_mark_start(frame_name_cstr);
+#endif
+
+    VALUE result = rb_yield(Qnil);
+
+#ifdef TRACY_ENABLE
+    ___tracy_emit_frame_mark_end(frame_name_cstr);
+#endif
+
+    return result;
+}
+
 /*
  * ================
  * Class definition
@@ -440,4 +471,5 @@ void ft_init_trace(void) {
     rb_define_method(cTrace, "tracepoint", trace_tracepoint, 0);
     rb_define_method(cTrace, "start", trace_start, 0);
     rb_define_method(cTrace, "stop", trace_stop, 0);
+    rb_define_method(cTrace, "frame", trace_frame, 1);
 }

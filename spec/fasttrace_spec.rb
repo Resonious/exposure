@@ -30,7 +30,16 @@ class TestClass < TestBaseClass
   end
 end
 
+tp = Fasttrace::Trace.new(File.expand_path('..', __dir__))
+tp.start
+
 RSpec.describe Fasttrace do
+  around do |example|
+    tp.frame example.description do
+      example.run
+    end
+  end
+
   it 'has a version number' do
     expect(Fasttrace::VERSION).not_to be nil
   end
@@ -39,7 +48,6 @@ RSpec.describe Fasttrace do
     expect(Fasttrace::Trace).to be_a Class
 
     tp = Fasttrace::Trace.new(File.expand_path('..', __dir__))
-    tp.start
 
     expect(tp).to be_a Fasttrace::Trace
     expect(tp.tracepoint).to be_a TracePoint
@@ -64,8 +72,6 @@ RSpec.describe Fasttrace do
       rescue RuntimeError => e
         results << e.message
       end
-    ensure
-      tp.stop
     end
 
     expect(results).to eq [

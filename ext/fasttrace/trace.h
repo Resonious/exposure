@@ -25,6 +25,8 @@ typedef struct trace_t {
 
     VALUE current_file_name;
     int current_line_number;
+
+    VALUE current_method_name;
 } trace_t;
 
 enum {
