@@ -1,26 +1,26 @@
 # frozen_string_literal: true
 
-require_relative 'lib/fasttrace/version'
+require_relative 'lib/tracyrb/version'
 
 Gem::Specification.new do |spec|
-  spec.name          = 'fasttrace'
-  spec.version       = Fasttrace::VERSION
+  spec.name          = 'tracyrb'
+  spec.version       = Tracyrb::VERSION
   spec.authors       = ['Nigel Baillie']
   spec.email         = ['nigelbaillie@hey.com']
 
-  spec.summary       = 'Trace your Ruby programs - and fast!'
+  spec.summary       = 'Trace your Ruby programs'
   spec.description   = <<~DESC
     This library does nothing but spit out an execution trace when you tell it to.
     Those traces can be used for runtime analysis and visualization.
   DESC
-  spec.homepage      = 'https://nigelbaillie.me'
+  spec.homepage      = 'https://github.com/Resonious/tracyrb'
   spec.license       = 'MIT'
   spec.required_ruby_version = '>= 2.7.0'
 
   # spec.metadata["allowed_push_host"] = "TODO: Set to 'https://mygemserver.com'"
 
   spec.metadata['homepage_uri'] = spec.homepage
-  spec.metadata['source_code_uri'] = 'https://github.com/Resonious/fasttrace'
+  spec.metadata['source_code_uri'] = 'https://github.com/Resonious/tracyrb'
   # spec.metadata["changelog_uri"] = "TODO: Put your gem's CHANGELOG.md URL here."
 
   # Specify which files should be added to the gem when it is released.
@@ -33,7 +33,7 @@ Gem::Specification.new do |spec|
   spec.bindir        = 'exe'
   spec.executables   = spec.files.grep(%r{\Aexe/}) { |f| File.basename(f) }
   spec.require_paths = ['lib']
-  spec.extensions    = ['ext/fasttrace/extconf.rb']
+  spec.extensions    = ['ext/tracyrb/extconf.rb']
 
   # Uncomment to register a new dependency of your gem
   # spec.add_dependency "example-gem", "~> 1.0"

@@ -30,10 +30,10 @@ class TestClass < TestBaseClass
   end
 end
 
-tp = Fasttrace::Trace.new(File.expand_path('..', __dir__))
+tp = Tracyrb::Trace.new(File.expand_path('..', __dir__))
 tp.start
 
-RSpec.describe Fasttrace do
+RSpec.describe Tracyrb do
   around do |example|
     tp.frame example.description do
       example.run
@@ -41,15 +41,15 @@ RSpec.describe Fasttrace do
   end
 
   it 'has a version number' do
-    expect(Fasttrace::VERSION).not_to be nil
+    expect(Tracyrb::VERSION).not_to be nil
   end
 
   it 'does something useful' do
-    expect(Fasttrace::Trace).to be_a Class
+    expect(Tracyrb::Trace).to be_a Class
 
-    tp = Fasttrace::Trace.new(File.expand_path('..', __dir__))
+    tp = Tracyrb::Trace.new(File.expand_path('..', __dir__))
 
-    expect(tp).to be_a Fasttrace::Trace
+    expect(tp).to be_a Tracyrb::Trace
     expect(tp.tracepoint).to be_a TracePoint
 
     begin

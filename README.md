@@ -1,15 +1,13 @@
-# Fasttrace
+# Tracyrb
 
-This gem spits out an execution trace of your Ruby program. You'll get a huge file with every line number and method call, as well as timing information.
-
-The goal is to eventually use this for full-program visualization.
+Tracy Profiler integration for Ruby.
 
 ## Installation
 
 Add this line to your application's Gemfile:
 
 ```ruby
-gem 'fasttrace'
+gem 'tracyrb'
 ```
 
 And then execute:
@@ -18,19 +16,15 @@ And then execute:
 
 Or install it yourself as:
 
-    $ gem install fasttrace
+    $ gem install tracyrb
 
 ## Usage
 
 ```ruby
-Fasttrace.start 'path/to/trace.out'
+Tracyrb.start
 my_ruby_code
-Fasttrace.stop
+Tracyrb.stop
 ```
-
-NOTE! Every time you run `Fasttrace.start`, the trace file will be truncated.
-
-Also, the trace files can get massive. Be careful!
 
 ## Development
 
@@ -40,7 +34,7 @@ To install this gem onto your local machine, run `bundle exec rake install`. To 
 
 ## Contributing
 
-Bug reports and pull requests are welcome on GitHub at https://github.com/Resonious/fasttrace.
+Bug reports and pull requests are welcome on GitHub at https://github.com/Resonious/tracyrb.
 
 ## License
 

@@ -13,8 +13,8 @@ require 'rake/extensiontask'
 
 task build: :compile
 
-Rake::ExtensionTask.new('fasttrace') do |ext|
-  ext.lib_dir = 'lib/fasttrace'
+Rake::ExtensionTask.new('tracyrb') do |ext|
+  ext.lib_dir = 'lib/tracyrb'
 end
 
 task default: %i[clobber compile spec rubocop]

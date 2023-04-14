@@ -1,7 +1,7 @@
-#ifndef FASTTRACE_TRACE_H
-#define FASTTRACE_TRACE_H 1
+#ifndef TRACYRB_TRACE_H
+#define TRACYRB_TRACE_H 1
 
-#include "fasttrace.h"
+#include "tracyrb.h"
 #include "measure.h"
 #include <stdio.h>
 #include "../../tracy/public/tracy/TracyC.h"
@@ -40,4 +40,4 @@ extern const unsigned int kSingleton;
 
 void ft_init_trace(void);
 
-#endif /* FASTTRACE_TRACE_H */
+#endif /* TRACYRB_TRACE_H */

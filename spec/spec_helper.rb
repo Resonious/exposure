@@ -1,6 +1,6 @@
 # frozen_string_literal: true
 
-require 'fasttrace'
+require 'tracyrb'
 
 RSpec.configure do |config|
   # Enable flags like --only-failures and --next-failure

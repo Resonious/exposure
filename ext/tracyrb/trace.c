@@ -464,7 +464,7 @@ void ft_init_trace(void) {
 
     sname = rb_intern("name");
 
-    cTrace = rb_define_class_under(mFasttrace, "Trace", rb_cObject);
+    cTrace = rb_define_class_under(mTracyrb, "Trace", rb_cObject);
     rb_define_alloc_func(cTrace, trace_allocate);
 
     rb_define_method(cTrace, "initialize", trace_initialize, 1);
