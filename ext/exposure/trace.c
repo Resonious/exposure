@@ -1,7 +1,5 @@
 #include "trace.h"
-#include <assert.h>
 #include <unistd.h>
-#include <errno.h>
 #include <sys/mman.h>
 #include <string.h>
 #include "../../filedict/filedict.h"
