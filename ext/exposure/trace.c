@@ -1,8 +1,10 @@
 #include "trace.h"
 #include "ruby/debug.h"
 #include "ruby/internal/event.h"
+#include "ruby/internal/globals.h"
 #include "ruby/internal/intern/string.h"
 #include "ruby/internal/value_type.h"
+#include "ruby/ruby.h"
 #include <stdio.h>
 #include <unistd.h>
 #include <sys/mman.h>
@@ -33,6 +35,8 @@ static void trace_mark(void *data) {
     rb_gc_mark(trace->tracepoint);
     rb_gc_mark(trace->project_root);
     rb_gc_mark(trace->current_file_name);
+    rb_gc_mark(trace->callee);
+    rb_gc_mark(trace->klass);
 
     for (int i = 0; i < trace->frames_count; ++i) {
         rb_gc_mark(trace->frames[i].file_name);
@@ -70,6 +74,9 @@ static VALUE trace_allocate(VALUE klass) {
     trace->tracepoint = Qnil;
     trace->project_root = Qnil;
     trace->frames_count = 0;
+    trace->callee = Qnil;
+    trace->klass = Qnil;
+    trace->new_call = 0;
 
     return result;
 }
@@ -80,6 +87,33 @@ static VALUE trace_allocate(VALUE klass) {
  * Trace methods
  * =============
  */
+
+static int is_in_project_root(trace_t *trace, rb_trace_arg_t *trace_arg) {
+    if (trace->project_root == Qnil) return 1;
+
+    VALUE current_file_name_rstr = rb_tracearg_path(trace_arg);
+    if (current_file_name_rstr == Qnil) return 0;
+
+    const char *current_file_name = StringValuePtr(current_file_name_rstr);
+    const char *project_root = StringValuePtr(trace->project_root);
+
+    const char *c1 = project_root;
+    const char *c2 = current_file_name;
+
+    // C-calls wrongly show up as in the current file,
+    // but regular calls will sometimes be relative paths.
+    // Also, regular calls get recorded during the line event because
+    // otherwise the file path is wack.
+    rb_event_flag_t event = rb_tracearg_event_flag(trace_arg);
+    if (event == RUBY_EVENT_LINE && *c2 != '/') return 1;
+
+    while (*c1 && *c2) {
+        if (*c1 != *c2) return 0;
+        c1++;
+        c2++;
+    }
+    return 1;
+}
 
 static const char* get_event_name(rb_event_flag_t event) {
     switch (event) {
@@ -212,10 +246,67 @@ static const char *get_class_name(VALUE klass) {
     }
 }
 
+static void record_new_call(rb_trace_arg_t *trace_arg, trace_t *trace) {
+    VALUE callee = trace->callee;
+    VALUE klass = trace->klass;
+    trace->callee = Qnil;
+    trace->klass = Qnil;
+
+    int is_in_root = is_in_project_root(trace, trace_arg);
+
+    // Only count calls to methods within the user's project
+    if (is_in_root) {
+        // We count for every frame in the stack.
+        // If we have
+        //   A: in project
+        //   B: out of project
+        //   C: in project
+        // then this helps us achieve the following behavior:
+        //   A(1) -> B(2) -> C(3) -> B(4)
+        //   A(1): not leaf <-- without this counting logic, this would be counted as leaf
+        //   B(2): not counted
+        //   C(3): leaf
+        //   B(4): not counted
+        for (int i = 0; i < trace->frames_count; ++i) {
+            trace->frames[i].calls += 1;
+        }
+    }
+
+    if (trace->frames_count >= FRAMES_MAX) {
+        printf("EXPOSURE OUT OF FRAMES!! probably won't function correctly\n");
+        return;
+    }
+
+    trace->frames_count += 1;
+    trace->frames[trace->frames_count - 1].calls = 0;
+    trace->frames[trace->frames_count - 1].is_in_root = is_in_root;
+
+    // Break out the method name in Class#instance_method / Class.singleton_method format.
+    const char *method_name = (callee != Qnil) ? rb_id2name(SYM2ID(callee)) : "<none>";
+    const char *class_name = get_class_name(klass);
+    int is_singleton = BUILTIN_TYPE(klass) == T_CLASS && FL_TEST(klass, FL_SINGLETON);
+    char method_sep = is_singleton ? '.' : '#';
+
+    snprintf(
+        trace->frames[trace->frames_count - 1].method_key, METHOD_KEY_LEN,
+        "%s%c%s",
+        class_name, method_sep, method_name
+    );
+
+    // rb_event_flag_t event = rb_tracearg_event_flag(trace_arg);
+    // VALUE current_file_name_rstr = rb_tracearg_path(trace_arg);
+    // printf("Creating frame %s %s (in root %i) %s\n", get_event_name(event), trace->frames[trace->frames_count - 1].method_key, is_in_root, rb_string_value_ptr(&current_file_name_rstr));
+}
+
 static void handle_line_event(VALUE tracepoint, trace_t *trace) {
     rb_trace_arg_t *trace_arg;
 
     trace_arg = rb_tracearg_from_tracepoint(tracepoint);
+
+    if (trace->new_call) {
+        trace->new_call = 0;
+        record_new_call(trace_arg, trace);
+    }
 
     trace->current_file_name = rb_tracearg_path(trace_arg);
     trace->current_line_number = FIX2INT(rb_tracearg_lineno(trace_arg));
@@ -223,6 +314,7 @@ static void handle_line_event(VALUE tracepoint, trace_t *trace) {
     if (trace->frames_count == 0) {
         trace->frames_count += 1;
         trace->frames[trace->frames_count - 1].calls = 0;
+        trace->frames[trace->frames_count - 1].is_in_root = is_in_project_root(trace, trace_arg);
     }
 
     // Sucks to do this on EVERY LINE
@@ -283,25 +375,6 @@ static int is_blocked(trace_t *trace, rb_trace_arg_t *trace_arg) {
     return 0;
 }
 
-static int is_in_project_root(trace_t *trace, rb_trace_arg_t *trace_arg) {
-    if (trace->project_root == Qnil) return 1;
-
-    VALUE current_file_name_rstr = rb_tracearg_path(trace_arg);
-    if (current_file_name_rstr == Qnil) return 1;
-
-    const char *current_file_name = StringValuePtr(current_file_name_rstr);
-    const char *project_root = StringValuePtr(trace->project_root);
-
-    const char *c1 = project_root;
-    const char *c2 = current_file_name;
-    while (*c1 && *c2) {
-        if (*c1 != *c2) return 0;
-        c1++;
-        c2++;
-    }
-    return 1;
-}
-
 static VALUE get_binding(VALUE tracepoint) {
     rb_trace_arg_t *trace_arg = rb_tracearg_from_tracepoint(tracepoint);
     return rb_tracearg_binding(trace_arg);
@@ -356,59 +429,30 @@ static void handle_call_event(VALUE tracepoint, trace_t *trace) {
     rb_trace_arg_t *trace_arg;
     trace_arg = rb_tracearg_from_tracepoint(tracepoint);
 
-    VALUE callee = rb_tracearg_callee_id(trace_arg);
-    VALUE klass = rb_tracearg_defined_class(trace_arg);
+    trace->callee = rb_tracearg_callee_id(trace_arg);
+    trace->klass = rb_tracearg_defined_class(trace_arg);
 
-    // Only count calls to methods within the user's project
-    if (is_in_project_root(trace, trace_arg)) {
-        // We count for every frame in the stack.
-        // If we have
-        //   A: in project
-        //   B: out of project
-        //   C: in project
-        // then this helps us achieve the following behavior:
-        //   A(1) -> B(2) -> C(3) -> B(4)
-        //   A(1): not leaf <-- without this counting logic, this would be counted as leaf
-        //   B(2): not counted
-        //   C(3): leaf
-        //   B(4): not counted
-        for (int i = 0; i < trace->frames_count; ++i) {
-            trace->frames[i].calls += 1;
-        }
+    rb_event_flag_t event = rb_tracearg_event_flag(trace_arg);
+    if (event & RUBY_EVENT_C_CALL) {
+        record_new_call(trace_arg, trace);
+    } else {
+        trace->new_call = 1;
     }
-
-    if (trace->frames_count >= FRAMES_MAX) {
-        printf("EXPOSURE OUT OF FRAMES!! probably won't function correctly\n");
-        return;
-    }
-
-    trace->frames_count += 1;
-    trace->frames[trace->frames_count - 1].calls = 0;
-
-    // Break out the method name in Class#instance_method / Class.singleton_method format.
-    const char *method_name = (callee != Qnil) ? rb_id2name(SYM2ID(callee)) : "<none>";
-    const char *class_name = get_class_name(klass);
-    int is_singleton = BUILTIN_TYPE(klass) == T_CLASS && FL_TEST(klass, FL_SINGLETON);
-    char method_sep = is_singleton ? '.' : '#';
-
-    snprintf(
-        trace->frames[trace->frames_count - 1].method_key, METHOD_KEY_LEN,
-        "%s%c%s",
-        class_name, method_sep, method_name
-    );
 }
 
 static void handle_return_event(VALUE tracepoint, trace_t *trace) {
+    if (trace->frames_count <= 0) {
+        return;
+    }
+
     trace_frame_t *frame = &trace->frames[trace->frames_count - 1];
     int is_leaf = frame->calls == 0;
 
-    if (is_leaf) {
+    if (frame->is_in_root && is_leaf) {
         printf("LEAF CALL %s\n", frame->method_key);
     }
 
-    if (trace->frames_count > 0) {
-        trace->frames_count -= 1;
-    }
+    trace->frames_count -= 1;
 }
 
 /*
@@ -424,10 +468,10 @@ static void event_hook(VALUE tracepoint, void *data) {
     event     = rb_tracearg_event_flag(trace_arg);
 
     if (event == RUBY_EVENT_LINE) handle_line_event(tracepoint, trace);
-    if (event == RUBY_EVENT_CALL || event == RUBY_EVENT_C_CALL) handle_call_event(tracepoint, trace);
-    if (event == RUBY_EVENT_RETURN || event == RUBY_EVENT_C_RETURN) handle_return_event(tracepoint, trace);
+    else if (event == RUBY_EVENT_CALL || event == RUBY_EVENT_C_CALL) handle_call_event(tracepoint, trace);
+    else if (event == RUBY_EVENT_RETURN || event == RUBY_EVENT_C_RETURN) handle_return_event(tracepoint, trace);
     else {
-        printf("BUG: unhandled tracepoint event in exposure??");
+        printf("BUG: unhandled tracepoint event in exposure??\n");
     }
 }
 

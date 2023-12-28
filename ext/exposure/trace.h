@@ -17,6 +17,7 @@ typedef struct trace_frame_t {
     int line_number;
     // If this is 0, then the frame is a "leaf call" and we will display it to the user.
     int calls;
+    int is_in_root;
     char method_key[METHOD_KEY_LEN];
 } trace_frame_t;
 
@@ -28,6 +29,9 @@ typedef struct trace_t {
 
     trace_frame_t frames[FRAMES_MAX];
     int frames_count;
+    int new_call;
+    VALUE callee;
+    VALUE klass;
 
     VALUE current_file_name;
     int current_line_number;
