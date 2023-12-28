@@ -13,6 +13,7 @@ in pkgs.mkShell {
     curl
     git
     which
+    gdb
     jq
   ];
 

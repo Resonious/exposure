@@ -1,15 +1,19 @@
 #include "trace.h"
+#include "ruby/debug.h"
+#include "ruby/internal/event.h"
+#include "ruby/internal/intern/string.h"
+#include "ruby/internal/value_type.h"
+#include <stdio.h>
 #include <unistd.h>
 #include <sys/mman.h>
 #include <string.h>
-#include "../../filedict/filedict.h"
 
 ID id_local_variables;
 ID id_local_variable_get;
 VALUE cTrace;
 
 static size_t PAGE_SIZE;
-#define IDENTIFIER_MAX_SIZE (FILEDICT_BUCKET_ENTRY_BYTES * 2)
+#define IDENTIFIER_MAX_SIZE (512 * 2)
 
 
 /*
@@ -29,14 +33,14 @@ static void trace_mark(void *data) {
     rb_gc_mark(trace->tracepoint);
     rb_gc_mark(trace->project_root);
     rb_gc_mark(trace->current_file_name);
+
+    for (int i = 0; i < trace->frames_count; ++i) {
+        rb_gc_mark(trace->frames[i].file_name);
+    }
 }
 
 static void trace_free(void *data) {
     trace_t *trace = (trace_t*)data;
-
-    filedict_deinit(&trace->returns);
-    filedict_deinit(&trace->locals);
-    filedict_deinit(&trace->blocks);
 
     xfree(trace);
 }
@@ -64,12 +68,8 @@ static VALUE trace_allocate(VALUE klass) {
 
     result = TypedData_Make_Struct(klass, trace_t, &trace_type, trace);
     trace->tracepoint = Qnil;
-
-    filedict_init(&trace->returns);
-    filedict_init(&trace->locals);
-    filedict_init(&trace->blocks);
-
     trace->project_root = Qnil;
+    trace->frames_count = 0;
 
     return result;
 }
@@ -219,6 +219,17 @@ static void handle_line_event(VALUE tracepoint, trace_t *trace) {
 
     trace->current_file_name = rb_tracearg_path(trace_arg);
     trace->current_line_number = FIX2INT(rb_tracearg_lineno(trace_arg));
+
+    if (trace->frames_count == 0) {
+        trace->frames_count += 1;
+        trace->frames[trace->frames_count - 1].calls = 0;
+    }
+
+    // Sucks to do this on EVERY LINE
+    trace->frames[trace->frames_count - 1].file_name = trace->current_file_name;
+    if (rb_str_cmp(trace->current_file_name, trace->frames[trace->frames_count - 1].file_name) == 0) {
+        trace->frames[trace->frames_count - 1].line_number = trace->current_line_number;
+    }
 }
 
 /*
@@ -336,121 +347,67 @@ static void write_local_variables(
             "%s%%%s",
             method_key, local_name
         );
-        filedict_insert_unique(&trace->locals, local_var_key, local_type);
+        // TODO: probably don't need this whole block
+        // filedict_insert_unique(&trace->locals, local_var_key, local_type);
     }
 }
 
-/*
- * On a b_return event, we record the return type of the block, as well as the
- * types of all its local variables and parameters.
- * Additionally, we record the receiver.
- */
-static void handle_b_return_event(VALUE tracepoint, trace_t *trace) {
+static void handle_call_event(VALUE tracepoint, trace_t *trace) {
     rb_trace_arg_t *trace_arg;
-    VALUE file_name_val, return_value, return_klass, receiver, receiver_class;
-    const char *file_name, *relative_file_name, *return_type, *receiver_type;
-    int line_number;
-    char block_key[IDENTIFIER_MAX_SIZE];
-
     trace_arg = rb_tracearg_from_tracepoint(tracepoint);
 
-    file_name_val = rb_tracearg_path(trace_arg);
-    file_name     = StringValuePtr(file_name_val);
+    VALUE callee = rb_tracearg_callee_id(trace_arg);
+    VALUE klass = rb_tracearg_defined_class(trace_arg);
 
-    relative_file_name = relative_to_project_root(trace, file_name);
-    /* There is no value in analyzing blocks outside of the current project */
-    if (relative_file_name == NULL) return;
-    if (is_blocked(trace, trace_arg)) return;
-
-    line_number  = FIX2INT(rb_tracearg_lineno(trace_arg));
-    return_value = rb_tracearg_return_value(trace_arg);
-    return_klass = rb_obj_class(return_value);
-    return_type  = get_class_name(return_klass);
-
-    /*
-     * We identify blocks by the line number of the block's end token.
-     * This is potentially ambiguous, as you could in theory have multiple
-     * blocks on the same line. Additionally, editing the code is likely to
-     * move blocks around. Not much we can do about these issues!
-     */
-    snprintf(
-        block_key,
-        sizeof(block_key),
-        "%s:%i",
-        relative_file_name, line_number
-    );
-
-    write_local_variables(trace, tracepoint, block_key);
-    filedict_insert_unique(&trace->returns, block_key, return_type);
-
-    if (trace->track_block_receivers) {
-        receiver = rb_tracearg_self(trace_arg);
-        if (receiver == Qnil) return;
-        receiver_class = rb_obj_class(receiver);
-        receiver_type = get_class_name(receiver_class);
-        filedict_insert_unique(&trace->blocks, block_key, receiver_type);
+    // Only count calls to methods within the user's project
+    if (is_in_project_root(trace, trace_arg)) {
+        // We count for every frame in the stack.
+        // If we have
+        //   A: in project
+        //   B: out of project
+        //   C: in project
+        // then this helps us achieve the following behavior:
+        //   A(1) -> B(2) -> C(3) -> B(4)
+        //   A(1): not leaf <-- without this counting logic, this would be counted as leaf
+        //   B(2): not counted
+        //   C(3): leaf
+        //   B(4): not counted
+        for (int i = 0; i < trace->frames_count; ++i) {
+            trace->frames[i].calls += 1;
+        }
     }
-}
 
-static void handle_call_or_return_event(VALUE tracepoint, trace_t *trace) {
-    rb_trace_arg_t *trace_arg;
+    if (trace->frames_count >= FRAMES_MAX) {
+        printf("EXPOSURE OUT OF FRAMES!! probably won't function correctly\n");
+        return;
+    }
 
-    VALUE callee, klass, return_value, return_klass;
-    int is_singleton = 0;
-    const char *class_name;
-    const char *method_name_cstr;
-    const char *return_type;
-    char method_sep;
-    char method_key[IDENTIFIER_MAX_SIZE];
+    trace->frames_count += 1;
+    trace->frames[trace->frames_count - 1].calls = 0;
 
-    trace_arg = rb_tracearg_from_tracepoint(tracepoint);
+    // Break out the method name in Class#instance_method / Class.singleton_method format.
+    const char *method_name = (callee != Qnil) ? rb_id2name(SYM2ID(callee)) : "<none>";
+    const char *class_name = get_class_name(klass);
+    int is_singleton = BUILTIN_TYPE(klass) == T_CLASS && FL_TEST(klass, FL_SINGLETON);
+    char method_sep = is_singleton ? '.' : '#';
 
-    callee         = rb_tracearg_callee_id(trace_arg);
-    klass          = rb_tracearg_defined_class(trace_arg);
-
-    /* Class#new is a nuisance because it generates a lot of different return types. */
-    /* TODO: Array methods also tend to get rather large. Maybe simply putting a cap
-     * on how many return types a single method can hold is a better solution. */
-    if (klass == rb_cClass) return;
-
-    class_name     = get_class_name(klass);
-    is_singleton   = BUILTIN_TYPE(klass) == T_CLASS && FL_TEST(klass, FL_SINGLETON);
-
-    method_name_cstr = (callee != Qnil ? rb_id2name(SYM2ID(callee)) : "<none>");
-
-    if (is_singleton) method_sep = '.';
-    else              method_sep = '#';
-
-    /* From here on we assume that this is a RETURN event */
-    return_value = rb_tracearg_return_value(trace_arg);
-    return_klass = rb_obj_class(return_value);
-    return_type  = get_class_name(return_klass);
-
-record_entry:
     snprintf(
-        method_key,
-        sizeof(method_key),
+        trace->frames[trace->frames_count - 1].method_key, METHOD_KEY_LEN,
         "%s%c%s",
-        class_name, method_sep, method_name_cstr
+        class_name, method_sep, method_name
     );
-    filedict_insert_unique(&trace->returns, method_key, return_type);
+}
 
-    /*
-     * Analyzing locals has a pretty large performance penalty, so we try to only do
-     * it for local files.
-     */
-    if (is_in_project_root(trace, trace_arg) && !is_blocked(trace, trace_arg)) {
-        write_local_variables(trace, tracepoint, method_key);
+static void handle_return_event(VALUE tracepoint, trace_t *trace) {
+    trace_frame_t *frame = &trace->frames[trace->frames_count - 1];
+    int is_leaf = frame->calls == 0;
+
+    if (is_leaf) {
+        printf("LEAF CALL %s\n", frame->method_key);
     }
 
-    /* For modules, we want data for both the module and the including class */
-    if (!is_singleton && BUILTIN_TYPE(klass) == T_MODULE) {
-        VALUE self = rb_tracearg_self(trace_arg);
-        if (self == Qnil) return;
-
-        klass = rb_obj_class(self);
-        class_name = get_class_name(klass);
-        goto record_entry;
+    if (trace->frames_count > 0) {
+        trace->frames_count -= 1;
     }
 }
 
@@ -467,8 +424,11 @@ static void event_hook(VALUE tracepoint, void *data) {
     event     = rb_tracearg_event_flag(trace_arg);
 
     if (event == RUBY_EVENT_LINE) handle_line_event(tracepoint, trace);
-    else if (event == RUBY_EVENT_B_RETURN) handle_b_return_event(tracepoint, trace);
-    else handle_call_or_return_event(tracepoint, trace);
+    if (event == RUBY_EVENT_CALL || event == RUBY_EVENT_C_CALL) handle_call_event(tracepoint, trace);
+    if (event == RUBY_EVENT_RETURN || event == RUBY_EVENT_C_RETURN) handle_return_event(tracepoint, trace);
+    else {
+        printf("BUG: unhandled tracepoint event in exposure??");
+    }
 }
 
 
@@ -480,32 +440,11 @@ static void event_hook(VALUE tracepoint, void *data) {
 
 static VALUE trace_initialize(
     VALUE self,
-    VALUE trace_entries_dir,
     VALUE project_root,
-    VALUE path_blocklist,
-    VALUE track_block_receivers
+    VALUE path_blocklist
 ) {
     trace_t *trace = RTYPEDDATA_DATA(self);
-    const char *trace_entries_filename_cstr = StringValuePtr(trace_entries_dir);
 
-    VALUE trace_returns_path = rb_str_new(trace_entries_filename_cstr, RSTRING_LEN(trace_entries_dir));
-    rb_str_append(trace_returns_path, rb_str_new_literal("/exposure.returns"));
-    const char *trace_returns_path_cstr = StringValuePtr(trace_returns_path);
-
-    VALUE trace_locals_path = rb_str_new(trace_entries_filename_cstr, RSTRING_LEN(trace_entries_dir));
-    rb_str_append(trace_locals_path, rb_str_new_literal("/exposure.locals"));
-    const char *trace_locals_path_cstr = StringValuePtr(trace_locals_path);
-
-    VALUE trace_blocks_path = rb_str_new(trace_entries_filename_cstr, RSTRING_LEN(trace_entries_dir));
-    rb_str_append(trace_blocks_path, rb_str_new_literal("/exposure.blocks"));
-    const char *trace_blocks_path_cstr = StringValuePtr(trace_blocks_path);
-
-    /* We expect these traces to be large */
-    filedict_open_f(&trace->returns, trace_returns_path_cstr, O_CREAT | O_RDWR, 4096 * 5);
-    filedict_open_f(&trace->locals, trace_locals_path_cstr, O_CREAT | O_RDWR, 4096 * 5);
-    filedict_open_f(&trace->blocks, trace_blocks_path_cstr, O_CREAT | O_RDWR, 4096 * 5);
-
-    trace->track_block_receivers = (track_block_receivers != Qfalse && track_block_receivers != Qnil);
     trace->path_blocklist = path_blocklist;
     trace->project_root = project_root;
 
@@ -518,8 +457,8 @@ static VALUE trace_tracepoint(VALUE self) {
     if (trace->tracepoint == Qnil) {
         trace->tracepoint = rb_tracepoint_new(
             Qnil,
+            RUBY_EVENT_CALL | RUBY_EVENT_C_CALL | 
             RUBY_EVENT_RETURN | RUBY_EVENT_C_RETURN |
-            RUBY_EVENT_B_RETURN |
             RUBY_EVENT_LINE,
             event_hook, (void*)trace
         );
@@ -541,7 +480,7 @@ void ft_init_trace(void) {
     cTrace = rb_define_class_under(mExposure, "Trace", rb_cObject);
     rb_define_alloc_func(cTrace, trace_allocate);
 
-    rb_define_method(cTrace, "initialize", trace_initialize, 4);
+    rb_define_method(cTrace, "initialize", trace_initialize, 2);
     rb_define_method(cTrace, "tracepoint", trace_tracepoint, 0);
 
     id_local_variables = rb_intern("local_variables");
