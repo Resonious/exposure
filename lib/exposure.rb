@@ -20,17 +20,23 @@ module Exposure
 
     server = Exposure::Server.new
     $_exposure_thread = Thread.new do
-      # TODO: should wait, but for now uh
-      $_exposure = Trace.new(
-        project_root ? project_root.to_s : Dir.pwd,
-        path_blocklist,
-        server
-      )
-      $_exposure.tracepoint.enable
-
       loop do
         from_server = server.ractor.take
-        puts "GOT FROM SERVER: #{from_server}"
+        case from_server
+        when :exited
+          puts 'Exposure: server exited'
+          break
+        when :connected
+          puts "Exposure: starting tracepoint"
+          $_exposure = Trace.new(
+            project_root ? project_root.to_s : Dir.pwd,
+            path_blocklist,
+            server
+          )
+          $_exposure.tracepoint.enable
+        else
+          puts "Exposure: GOT FROM SERVER #{from_server.inspect}"
+        end
       end
     end
   end

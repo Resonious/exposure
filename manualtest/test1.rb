@@ -15,7 +15,8 @@ class TestClass
 end
 
 Exposure.start project_root: __dir__
-sleep 1
+puts 'exposure started. press enter to continue'
+gets
 
 t = TestClass.new
 t.maybe_leaf true
@@ -24,5 +25,5 @@ TestClass.singleton_leaf
 
 Exposure.stop
 
-puts 'done'
-sleep 1
+puts 'done. press enter to exit (wtf)'
+gets
