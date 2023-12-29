@@ -1,5 +1,9 @@
 #include "trace.h"
+#include "abd_buffer.h"
+#include "messages.h"
 #include "ruby/debug.h"
+#include "ruby/internal/core/rstring.h"
+#include "ruby/internal/eval.h"
 #include "ruby/internal/event.h"
 #include "ruby/internal/globals.h"
 #include "ruby/internal/intern/cont.h"
@@ -8,6 +12,9 @@
 #include "ruby/internal/value_type.h"
 #include "ruby/ruby.h"
 #include "ruby/st.h"
+#include "data.h"
+#include "pcg_basic.h"
+#include <stdint.h>
 #include <stdio.h>
 #include <unistd.h>
 #include <sys/mman.h>
@@ -15,6 +22,7 @@
 
 ID id_local_variables;
 ID id_local_variable_get;
+ID id_call;
 VALUE cTrace;
 
 static size_t PAGE_SIZE;
@@ -59,6 +67,7 @@ static void trace_mark(void *data) {
     trace_t *trace = (trace_t*)data;
     rb_gc_mark(trace->tracepoint);
     rb_gc_mark(trace->project_root);
+    rb_gc_mark(trace->data_sender);
     st_foreach(trace->fibers_table, mark_traced_fiber, 0);
 }
 
@@ -472,6 +481,7 @@ static VALUE get_binding(VALUE tracepoint) {
     return rb_tracearg_binding(trace_arg);
 }
 
+// TODO: not used but might want to reference this when we pull local variable values
 static void write_local_variables(
     trace_t *trace,
     VALUE tracepoint,
@@ -535,6 +545,10 @@ static void handle_call_event(VALUE tracepoint, trace_t *trace) {
     }
 }
 
+static void send_data(trace_t *trace, VALUE ruby_string) {
+    rb_funcall(trace->data_sender, id_call, 1, ruby_string);
+}
+
 static void handle_return_event(VALUE tracepoint, trace_t *trace) {
     VALUE fiber = rb_fiber_current();
     trace_stack_t *stack = stack_for_fiber(trace, fiber);
@@ -551,10 +565,32 @@ static void handle_return_event(VALUE tracepoint, trace_t *trace) {
 
     // TODO: would love to grab local variable values right here too and report them.
 
-    // DEBUG PRINT (REPLACE WITH REAL SEND)
     if (frame->is_in_root && is_leaf) {
-        printf("LEAF CALL (%s) (%s:%i) (%s) %s\n", get_event_name(event), RSTRING_PTR(frame->file_name), frame->line_number, stack->name ? stack->name : "??", frame->method_key);
+        uint32_t id = pcg32_random_r(&trace->rng);
+
+        long cap = METHOD_KEY_LEN + 1024; // kinda arbitrary right now!!
+        VALUE data = rb_str_buf_new(cap);
+        AbdBuffer buf = buf_new_cap(RSTRING_PTR(data), 0, cap);
+
+        // u8 message
+        uint8_t msg = MESSAGE_NEW_LEAF;
+        data_u8(ABD_WRITE, &buf, &msg);
+
+        // u32 id of leaf (I'll need to record this.. actually not sure how this will work)
+        data_u32(ABD_WRITE, &buf, &id);
+
+        // string method_key
+        data_string(ABD_WRITE, &buf, frame->method_key);
+
+        // SEND
+        rb_str_set_len(data, buf.pos);
+        send_data(trace, data);
     }
+
+    // DEBUG PRINT (REPLACE WITH REAL SEND)
+    // if (frame->is_in_root && is_leaf) {
+    //     printf("LEAF CALL (%s) (%s:%i) (%s) %s\n", get_event_name(event), RSTRING_PTR(frame->file_name), frame->line_number, stack->name ? stack->name : "??", frame->method_key);
+    // }
     // END DEBUG PRINT
 
     stack->frames_count -= 1;
@@ -590,13 +626,16 @@ static void event_hook(VALUE tracepoint, void *data) {
 static VALUE trace_initialize(
     VALUE self,
     VALUE project_root,
-    VALUE path_blocklist
+    VALUE path_blocklist,
+    VALUE data_sender
 ) {
     trace_t *trace = RTYPEDDATA_DATA(self);
 
     trace->path_blocklist = path_blocklist;
     trace->project_root = project_root;
+    trace->data_sender = data_sender;
     trace->fibers_table = NULL;
+    pcg32_srandom_r(&trace->rng, 20u, 20u);
 
     return self;
 }
@@ -633,9 +672,10 @@ void ft_init_trace(void) {
     cTrace = rb_define_class_under(mExposure, "Trace", rb_cObject);
     rb_define_alloc_func(cTrace, trace_allocate);
 
-    rb_define_method(cTrace, "initialize", trace_initialize, 2);
+    rb_define_method(cTrace, "initialize", trace_initialize, 3);
     rb_define_method(cTrace, "tracepoint", trace_tracepoint, 0);
 
     id_local_variables = rb_intern("local_variables");
     id_local_variable_get = rb_intern("local_variable_get");
+    id_call = rb_intern("call");
 }

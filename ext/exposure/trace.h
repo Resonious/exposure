@@ -1,3 +1,4 @@
+#include "pcg_basic.h"
 #ifndef EXPOSURE_TRACE_H
 #define EXPOSURE_TRACE_H 1
 
@@ -35,8 +36,11 @@ typedef struct trace_t {
 
     VALUE project_root;
     VALUE path_blocklist;
+    VALUE data_sender;
 
     st_table *fibers_table;
+
+    pcg32_random_t rng;
 } trace_t;
 
 void ft_init_trace(void);
