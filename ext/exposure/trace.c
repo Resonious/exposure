@@ -4,6 +4,7 @@
 #include "ruby/internal/globals.h"
 #include "ruby/internal/intern/cont.h"
 #include "ruby/internal/intern/string.h"
+#include "ruby/internal/special_consts.h"
 #include "ruby/internal/value_type.h"
 #include "ruby/ruby.h"
 #include "ruby/st.h"
@@ -169,12 +170,15 @@ static int is_in_project_root(trace_t *trace, rb_trace_arg_t *trace_arg) {
     const char *c1 = project_root;
     const char *c2 = current_file_name;
 
-    // C-calls wrongly show up as in the current file,
-    // but regular calls will sometimes be relative paths.
-    // Also, regular calls get recorded during the line event because
-    // otherwise the file path is wack.
+    // This is probably something like "<internal:...>" which is never local
+    if (c2[0] == '<') return 0;
+
+    // Likely "(eval)" which is assumed not local (can't really tell in this case)
+    if (c2[0] == '(') return 0;
+
+    // Relative paths are assumed to be local
     rb_event_flag_t event = rb_tracearg_event_flag(trace_arg);
-    if (event == RUBY_EVENT_LINE && *c2 != '/') return 1;
+    if (event == RUBY_EVENT_LINE && c2[0] != '/') return 1;
 
     while (*c1 && *c2) {
         if (*c1 != *c2) return 0;
@@ -298,7 +302,7 @@ klass_name(VALUE klass)
 static const char *get_class_name(VALUE klass) {
     VALUE name;
 
-    if (klass == rb_cNilClass) {
+    if (klass == rb_cNilClass || klass == Qnil) {
         return "nil";
     }
     else if (klass == rb_cFalseClass || klass == rb_cTrueClass) {
@@ -324,7 +328,16 @@ static void record_new_call(rb_trace_arg_t *trace_arg, trace_t *trace) {
     stack->callee = Qnil;
     stack->klass = Qnil;
 
-    int is_in_root = is_in_project_root(trace, trace_arg);
+    // TODO: despite these checks, I sometimes still see BasicObject show up.
+    int check_root = 1;
+    if (
+        klass == rb_cModule || klass == rb_cClass ||
+        klass == rb_cBasicObject
+    ) {
+        check_root = 0;
+    }
+
+    int is_in_root = check_root && is_in_project_root(trace, trace_arg);
 
     // Only count calls to methods within the user's project
     if (is_in_root) {
@@ -352,11 +365,13 @@ static void record_new_call(rb_trace_arg_t *trace_arg, trace_t *trace) {
     stack->frames_count += 1;
     stack->frames[stack->frames_count - 1].calls = 0;
     stack->frames[stack->frames_count - 1].is_in_root = is_in_root;
+    stack->frames[stack->frames_count - 1].file_name = stack->current_file_name;
+    stack->frames[stack->frames_count - 1].line_number = stack->current_line_number;
 
     // Break out the method name in Class#instance_method / Class.singleton_method format.
     const char *method_name = (callee != Qnil) ? rb_id2name(SYM2ID(callee)) : "<none>";
     const char *class_name = get_class_name(klass);
-    int is_singleton = BUILTIN_TYPE(klass) == T_CLASS && FL_TEST(klass, FL_SINGLETON);
+    int is_singleton = klass == Qnil || (BUILTIN_TYPE(klass) == T_CLASS && FL_TEST(klass, FL_SINGLETON));
     char method_sep = is_singleton ? '.' : '#';
 
     snprintf(
@@ -390,6 +405,8 @@ static void handle_line_event(VALUE tracepoint, trace_t *trace) {
         stack->frames_count += 1;
         stack->frames[stack->frames_count - 1].calls = 0;
         stack->frames[stack->frames_count - 1].is_in_root = is_in_project_root(trace, trace_arg);
+        stack->frames[stack->frames_count - 1].file_name = Qnil;
+        stack->frames[stack->frames_count - 1].line_number = 0;
     }
 
     // Sucks to do this on EVERY LINE
@@ -511,7 +528,7 @@ static void handle_call_event(VALUE tracepoint, trace_t *trace) {
     stack->klass = rb_tracearg_defined_class(trace_arg);
 
     rb_event_flag_t event = rb_tracearg_event_flag(trace_arg);
-    if (event & RUBY_EVENT_C_CALL) {
+    if (event == RUBY_EVENT_C_CALL) {
         record_new_call(trace_arg, trace);
     } else {
         stack->new_call = 1;
@@ -526,12 +543,19 @@ static void handle_return_event(VALUE tracepoint, trace_t *trace) {
         return;
     }
 
-    trace_frame_t *frame = &stack->frames[stack->frames_count - 1];
-    int is_leaf = frame->calls == 0;
+    rb_trace_arg_t *trace_arg = rb_tracearg_from_tracepoint(tracepoint);
+    rb_event_flag_t event     = rb_tracearg_event_flag(trace_arg);
 
+    trace_frame_t *frame = &stack->frames[stack->frames_count - 1];
+    int is_leaf = event != RUBY_EVENT_C_RETURN && frame->calls == 0;
+
+    // TODO: would love to grab local variable values right here too and report them.
+
+    // DEBUG PRINT (REPLACE WITH REAL SEND)
     if (frame->is_in_root && is_leaf) {
-        printf("LEAF CALL %s\n", frame->method_key);
+        printf("LEAF CALL (%s) (%s:%i) (%s) %s\n", get_event_name(event), RSTRING_PTR(frame->file_name), frame->line_number, stack->name ? stack->name : "??", frame->method_key);
     }
+    // END DEBUG PRINT
 
     stack->frames_count -= 1;
 }

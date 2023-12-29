@@ -3,7 +3,7 @@
 require_relative 'lib/exposure/version'
 
 Gem::Specification.new do |spec|
-  spec.name          = 'exposurerb'
+  spec.name          = 'exposure'
   spec.version       = Exposure::VERSION
   spec.authors       = ['Nigel Baillie']
   spec.email         = ['nigelbaillie@hey.com']
