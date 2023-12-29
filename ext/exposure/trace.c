@@ -58,7 +58,6 @@ static void trace_mark(void *data) {
     trace_t *trace = (trace_t*)data;
     rb_gc_mark(trace->tracepoint);
     rb_gc_mark(trace->project_root);
-    rb_gc_mark(trace->last_fiber);
     st_foreach(trace->fibers_table, mark_traced_fiber, 0);
 }
 

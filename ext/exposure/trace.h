@@ -41,7 +41,6 @@ typedef struct trace_t {
     VALUE path_blocklist;
 
     st_table *fibers_table;
-    VALUE last_fiber;
 } trace_t;
 
 void ft_init_trace(void);
