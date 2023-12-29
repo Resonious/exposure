@@ -2,9 +2,11 @@
 #include "ruby/debug.h"
 #include "ruby/internal/event.h"
 #include "ruby/internal/globals.h"
+#include "ruby/internal/intern/cont.h"
 #include "ruby/internal/intern/string.h"
 #include "ruby/internal/value_type.h"
 #include "ruby/ruby.h"
+#include "ruby/st.h"
 #include <stdio.h>
 #include <unistd.h>
 #include <sys/mman.h>
@@ -30,21 +32,43 @@ static size_t PAGE_SIZE;
  * references to Ruby objects in C code.
  */
 
+static int mark_traced_fiber(st_data_t key, st_data_t value, st_data_t _args) {
+    VALUE fiber = (VALUE)key;
+    trace_stack_t *stack = (trace_stack_t *)value;
+    rb_gc_mark(fiber);
+
+    rb_gc_mark(stack->current_file_name);
+    rb_gc_mark(stack->callee);
+    rb_gc_mark(stack->klass);
+    for (int i = 0; i < stack->frames_count; ++i) {
+        rb_gc_mark(stack->frames[i].file_name);
+    }
+
+    return ST_CONTINUE;
+}
+
+static int free_traced_fiber(st_data_t _key, st_data_t value, st_data_t _args) {
+    trace_stack_t *stack = (trace_stack_t *)value;
+    if (stack->name != NULL) xfree(stack->name);
+    xfree(stack);
+    return ST_CONTINUE;
+}
+
 static void trace_mark(void *data) {
     trace_t *trace = (trace_t*)data;
     rb_gc_mark(trace->tracepoint);
     rb_gc_mark(trace->project_root);
-    rb_gc_mark(trace->current_file_name);
-    rb_gc_mark(trace->callee);
-    rb_gc_mark(trace->klass);
-
-    for (int i = 0; i < trace->frames_count; ++i) {
-        rb_gc_mark(trace->frames[i].file_name);
-    }
+    rb_gc_mark(trace->last_fiber);
+    st_foreach(trace->fibers_table, mark_traced_fiber, 0);
 }
 
 static void trace_free(void *data) {
     trace_t *trace = (trace_t*)data;
+
+    if (trace->fibers_table) {
+        st_foreach(trace->fibers_table, free_traced_fiber, 0);
+        st_free_table(trace->fibers_table);
+    }
 
     xfree(trace);
 }
@@ -73,10 +97,6 @@ static VALUE trace_allocate(VALUE klass) {
     result = TypedData_Make_Struct(klass, trace_t, &trace_type, trace);
     trace->tracepoint = Qnil;
     trace->project_root = Qnil;
-    trace->frames_count = 0;
-    trace->callee = Qnil;
-    trace->klass = Qnil;
-    trace->new_call = 0;
 
     return result;
 }
@@ -87,6 +107,56 @@ static VALUE trace_allocate(VALUE klass) {
  * Trace methods
  * =============
  */
+
+static void stack_init(trace_stack_t *stack, VALUE fiber) {
+    stack->frames_count = 0;
+    stack->callee = Qnil;
+    stack->klass = Qnil;
+    stack->new_call = 0;
+    stack->name = NULL;
+
+    VALUE fiber_name = rb_sprintf("Fiber %i", FIX2INT(rb_obj_id(fiber)));
+    unsigned long long fiber_name_len = RSTRING_LEN(fiber_name);
+
+    stack->name = xmalloc(fiber_name_len + 1);
+    memcpy(stack->name, RSTRING_PTR(fiber_name), fiber_name_len);
+    stack->name[fiber_name_len] = '\0';
+}
+
+// Boilerplate for st_table
+static int rb_value_compare(st_data_t a, st_data_t b) {
+    VALUE va = (VALUE)a;
+    VALUE vb = (VALUE)b;
+
+    return rb_eql(va, vb);
+}
+
+// Boilerplate for st_table
+static st_index_t rb_value_hash(st_data_t a) {
+    VALUE va = (VALUE)a;
+    return rb_hash(va);
+}
+
+static struct st_hash_type fibers_table_type;
+
+static trace_stack_t *stack_for_fiber(trace_t *trace, VALUE fiber) {
+    trace_stack_t *stack;
+    st_data_t data;
+
+    if (!trace->fibers_table) {
+        trace->fibers_table = st_init_table_with_size(&fibers_table_type, 16);
+    }
+
+    if (st_lookup(trace->fibers_table, fiber, &data)) {
+        stack = (trace_stack_t *)data;
+    } else {
+        stack = xmalloc(sizeof(trace_stack_t));
+        stack_init(stack, fiber);
+        st_insert(trace->fibers_table, (st_data_t)fiber, (st_data_t)stack);
+    }
+
+    return stack;
+}
 
 static int is_in_project_root(trace_t *trace, rb_trace_arg_t *trace_arg) {
     if (trace->project_root == Qnil) return 1;
@@ -247,10 +317,13 @@ static const char *get_class_name(VALUE klass) {
 }
 
 static void record_new_call(rb_trace_arg_t *trace_arg, trace_t *trace) {
-    VALUE callee = trace->callee;
-    VALUE klass = trace->klass;
-    trace->callee = Qnil;
-    trace->klass = Qnil;
+    VALUE fiber = rb_fiber_current();
+    trace_stack_t *stack = stack_for_fiber(trace, fiber);
+
+    VALUE callee = stack->callee;
+    VALUE klass = stack->klass;
+    stack->callee = Qnil;
+    stack->klass = Qnil;
 
     int is_in_root = is_in_project_root(trace, trace_arg);
 
@@ -267,19 +340,19 @@ static void record_new_call(rb_trace_arg_t *trace_arg, trace_t *trace) {
         //   B(2): not counted
         //   C(3): leaf
         //   B(4): not counted
-        for (int i = 0; i < trace->frames_count; ++i) {
-            trace->frames[i].calls += 1;
+        for (int i = 0; i < stack->frames_count; ++i) {
+            stack->frames[i].calls += 1;
         }
     }
 
-    if (trace->frames_count >= FRAMES_MAX) {
+    if (stack->frames_count >= FRAMES_MAX) {
         printf("EXPOSURE OUT OF FRAMES!! probably won't function correctly\n");
         return;
     }
 
-    trace->frames_count += 1;
-    trace->frames[trace->frames_count - 1].calls = 0;
-    trace->frames[trace->frames_count - 1].is_in_root = is_in_root;
+    stack->frames_count += 1;
+    stack->frames[stack->frames_count - 1].calls = 0;
+    stack->frames[stack->frames_count - 1].is_in_root = is_in_root;
 
     // Break out the method name in Class#instance_method / Class.singleton_method format.
     const char *method_name = (callee != Qnil) ? rb_id2name(SYM2ID(callee)) : "<none>";
@@ -288,39 +361,42 @@ static void record_new_call(rb_trace_arg_t *trace_arg, trace_t *trace) {
     char method_sep = is_singleton ? '.' : '#';
 
     snprintf(
-        trace->frames[trace->frames_count - 1].method_key, METHOD_KEY_LEN,
+        stack->frames[stack->frames_count - 1].method_key, METHOD_KEY_LEN,
         "%s%c%s",
         class_name, method_sep, method_name
     );
 
     // rb_event_flag_t event = rb_tracearg_event_flag(trace_arg);
     // VALUE current_file_name_rstr = rb_tracearg_path(trace_arg);
-    // printf("Creating frame %s %s (in root %i) %s\n", get_event_name(event), trace->frames[trace->frames_count - 1].method_key, is_in_root, rb_string_value_ptr(&current_file_name_rstr));
+    // printf("Creating frame %s %s (in root %i) %s\n", get_event_name(event), stack->frames[stack->frames_count - 1].method_key, is_in_root, rb_string_value_ptr(&current_file_name_rstr));
 }
 
 static void handle_line_event(VALUE tracepoint, trace_t *trace) {
+    VALUE fiber = rb_fiber_current();
+    trace_stack_t *stack = stack_for_fiber(trace, fiber);
+
     rb_trace_arg_t *trace_arg;
 
     trace_arg = rb_tracearg_from_tracepoint(tracepoint);
 
-    if (trace->new_call) {
-        trace->new_call = 0;
+    if (stack->new_call) {
+        stack->new_call = 0;
         record_new_call(trace_arg, trace);
     }
 
-    trace->current_file_name = rb_tracearg_path(trace_arg);
-    trace->current_line_number = FIX2INT(rb_tracearg_lineno(trace_arg));
+    stack->current_file_name = rb_tracearg_path(trace_arg);
+    stack->current_line_number = FIX2INT(rb_tracearg_lineno(trace_arg));
 
-    if (trace->frames_count == 0) {
-        trace->frames_count += 1;
-        trace->frames[trace->frames_count - 1].calls = 0;
-        trace->frames[trace->frames_count - 1].is_in_root = is_in_project_root(trace, trace_arg);
+    if (stack->frames_count == 0) {
+        stack->frames_count += 1;
+        stack->frames[stack->frames_count - 1].calls = 0;
+        stack->frames[stack->frames_count - 1].is_in_root = is_in_project_root(trace, trace_arg);
     }
 
     // Sucks to do this on EVERY LINE
-    trace->frames[trace->frames_count - 1].file_name = trace->current_file_name;
-    if (rb_str_cmp(trace->current_file_name, trace->frames[trace->frames_count - 1].file_name) == 0) {
-        trace->frames[trace->frames_count - 1].line_number = trace->current_line_number;
+    stack->frames[stack->frames_count - 1].file_name = stack->current_file_name;
+    if (rb_str_cmp(stack->current_file_name, stack->frames[stack->frames_count - 1].file_name) == 0) {
+        stack->frames[stack->frames_count - 1].line_number = stack->current_line_number;
     }
 }
 
@@ -426,33 +502,39 @@ static void write_local_variables(
 }
 
 static void handle_call_event(VALUE tracepoint, trace_t *trace) {
+    VALUE fiber = rb_fiber_current();
+    trace_stack_t *stack = stack_for_fiber(trace, fiber);
+
     rb_trace_arg_t *trace_arg;
     trace_arg = rb_tracearg_from_tracepoint(tracepoint);
 
-    trace->callee = rb_tracearg_callee_id(trace_arg);
-    trace->klass = rb_tracearg_defined_class(trace_arg);
+    stack->callee = rb_tracearg_callee_id(trace_arg);
+    stack->klass = rb_tracearg_defined_class(trace_arg);
 
     rb_event_flag_t event = rb_tracearg_event_flag(trace_arg);
     if (event & RUBY_EVENT_C_CALL) {
         record_new_call(trace_arg, trace);
     } else {
-        trace->new_call = 1;
+        stack->new_call = 1;
     }
 }
 
 static void handle_return_event(VALUE tracepoint, trace_t *trace) {
-    if (trace->frames_count <= 0) {
+    VALUE fiber = rb_fiber_current();
+    trace_stack_t *stack = stack_for_fiber(trace, fiber);
+
+    if (stack->frames_count <= 0) {
         return;
     }
 
-    trace_frame_t *frame = &trace->frames[trace->frames_count - 1];
+    trace_frame_t *frame = &stack->frames[stack->frames_count - 1];
     int is_leaf = frame->calls == 0;
 
     if (frame->is_in_root && is_leaf) {
         printf("LEAF CALL %s\n", frame->method_key);
     }
 
-    trace->frames_count -= 1;
+    stack->frames_count -= 1;
 }
 
 /*
@@ -491,6 +573,7 @@ static VALUE trace_initialize(
 
     trace->path_blocklist = path_blocklist;
     trace->project_root = project_root;
+    trace->fibers_table = NULL;
 
     return self;
 }
@@ -520,6 +603,9 @@ static VALUE trace_tracepoint(VALUE self) {
 
 void ft_init_trace(void) {
     PAGE_SIZE = (size_t)getpagesize();
+
+    fibers_table_type.compare = rb_value_compare;
+    fibers_table_type.hash = rb_value_hash;
 
     cTrace = rb_define_class_under(mExposure, "Trace", rb_cObject);
     rb_define_alloc_func(cTrace, trace_allocate);

@@ -21,11 +21,8 @@ typedef struct trace_frame_t {
     char method_key[METHOD_KEY_LEN];
 } trace_frame_t;
 
-typedef struct trace_t {
-    VALUE tracepoint;
-
-    VALUE project_root;
-    VALUE path_blocklist;
+typedef struct trace_stack_t {
+    char *name;
 
     trace_frame_t frames[FRAMES_MAX];
     int frames_count;
@@ -35,6 +32,16 @@ typedef struct trace_t {
 
     VALUE current_file_name;
     int current_line_number;
+} trace_stack_t;
+
+typedef struct trace_t {
+    VALUE tracepoint;
+
+    VALUE project_root;
+    VALUE path_blocklist;
+
+    st_table *fibers_table;
+    VALUE last_fiber;
 } trace_t;
 
 void ft_init_trace(void);
