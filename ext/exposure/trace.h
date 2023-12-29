@@ -5,10 +5,6 @@
 #include "measure.h"
 #include <stdio.h>
 
-#define FILEDICT_IMPL 1
-#include "../../filedict/filedict.h"
-#undef FILEDICT_IMPL
-
 #define METHOD_KEY_LEN 1024
 #define FRAMES_MAX 4096
 
