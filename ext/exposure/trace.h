@@ -5,7 +5,7 @@
 #include "measure.h"
 #include <stdio.h>
 
-#define METHOD_KEY_LEN 1024
+#define METHOD_KEY_LEN 512
 #define FRAMES_MAX 4096
 
 typedef struct trace_frame_t {
