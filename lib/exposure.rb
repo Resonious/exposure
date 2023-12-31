@@ -27,7 +27,7 @@ module Exposure
           puts 'Exposure: server exited'
           break
         when :connected
-          puts "Exposure: starting tracepoint"
+          puts "Exposure: client conntected, starting tracepoint"
           $_exposure = Trace.new(
             project_root ? project_root.to_s : Dir.pwd,
             path_blocklist,
@@ -42,12 +42,13 @@ module Exposure
   end
 
   def self.stop
-    return if $_exposure_thread.nil?
+    return :not_running if $_exposure_thread.nil?
     if $_exposure
       $_exposure.tracepoint.disable
       $_exposure = nil
     end
     $_exposure_thread&.kill
     $_exposure_thread = nil
+    :stopped
   end
 end

@@ -1,9 +1,19 @@
 require 'socket'
+require 'digest/sha1'
+require 'base64'
+
 require_relative 'websocket'
 
 module Exposure
   # This is the server's main loop. Runs in a Ractor.
-  RACTOR = proc do
+  SERVER_RACTOR_BODY = proc do
+    compute_websocket_accept = lambda do |sec_websocket_key|
+      guid = '258EAFA5-E914-47DA-95CA-C5AB0DC85B11'
+      accept_key = sec_websocket_key + guid
+      sha1_result = Digest::SHA1.digest(accept_key)
+      Base64.encode64(sha1_result).strip
+    end
+
     bind_addr, bind_port = Ractor.receive
     listener = TCPServer.new(bind_addr, bind_port)
 
@@ -12,7 +22,7 @@ module Exposure
     puts "Exposure listening on #{address[2]}:#{address[1]}"
 
     sockets = [listener]
-    clients = []
+    clients = {}
 
     # Mapping from socket to websocket headers
     handshakes = {}
@@ -48,21 +58,25 @@ module Exposure
           elsif data_lowercase.start_with?('sec-websocket-key: ')
             handshakes[socket][:websocket_key] = data.split(':').last.strip
 
+          elsif data_lowercase.start_with?('sec-websocket-version: ')
+            handshakes[socket][:websocket_version] = data.split(':').last.strip.to_i
+
           elsif data.empty? && handshakes.dig(socket, :wants_websocket)
-            clients << socket
+            clients[socket] = handshakes[socket]
             Ractor.yield :connected
 
             response = [
-              'HTTP/1.1 101 OK',
+              'HTTP/1.1 101 Switching Protocols',
               'Upgrade: websocket',
               'Connection: upgrade',
             ]
             if (key = handshakes.dig(socket, :websocket_key))
-              response.push "Sec-WebSocket-Accept: #{key}"
+              response << "Sec-WebSocket-Accept: #{compute_websocket_accept.call key}"
             end
-            response.push ''
 
-            socket.write response.join("\n")
+            socket.write response.join("\r\n")
+            2.times { socket.write "\r\n" }
+            socket.flush
           end
         end
       end
@@ -70,9 +84,9 @@ module Exposure
 
     # Now loop forever ... (until client closes I guess? then maybe loop BACK to the top?)
     loop do
-      buffer = Ractor.receive
+      data = Ractor.receive
 
-      case buffer
+      case data
       when :close
         puts 'Closing Exposure'
         sockets.each do |socket|
@@ -81,9 +95,11 @@ module Exposure
         break
       end
 
-      puts "FORWARDING: #{buffer.class} #{buffer.each_byte.map { |b| b.to_i.to_s(16) }.join}" # TODO obviously bad. send to websocket connection in real
-      clients.each do |client|
-        frame = WebSocket::Frame::Outgoing::Server.new(version: 13, data: buffer, type: :binary)
+      puts "FORWARDING: #{data.class} #{data.each_byte.map { |b| b.to_i.to_s(16) }.join}" # TODO obviously bad. send to websocket connection in real
+      clients.each do |client, handshake|
+        version = handshake.fetch(:websocket_version, 13)
+        frame = WebSocket::Frame::Outgoing::Server.new(version:, data:, type: :binary)
+        puts "-> #{frame.to_s.each_byte.map { |b| b.to_i.to_s(16) }.join}"
         client.write(frame.to_s)
         # TODO: catch eof?
       end
@@ -96,7 +112,7 @@ module Exposure
     attr_reader :ractor
 
     def initialize(bind = "127.0.0.1", port = 9909)
-      @ractor = Ractor.new(&RACTOR)
+      @ractor = Ractor.new(&SERVER_RACTOR_BODY)
       @ractor.send([bind, port], move: true)
     end
 
